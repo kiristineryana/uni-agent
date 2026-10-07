@@ -5,11 +5,13 @@ import argparse
 import asyncio
 import logging
 import sys
+import time
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Bot, Update
+from telegram.error import NetworkError, TimedOut
 from telegram.ext import Application
 
 from . import bot, db, notify
@@ -28,11 +30,18 @@ def setup_logging(settings: Settings) -> None:
         settings.log_dir / "uni_agent.log", maxBytes=1_000_000, backupCount=5, encoding="utf-8"
     )
     file_handler.setFormatter(fmt)
-    console = logging.StreamHandler(sys.stdout)
-    console.setFormatter(fmt)
+    handlers: list[logging.Handler] = [file_handler]
+    if sys.stdout is not None:  # None under pythonw.exe (background, no console)
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # emoji on the Windows console
+        except (AttributeError, ValueError):
+            pass
+        console = logging.StreamHandler(sys.stdout)
+        console.setFormatter(fmt)
+        handlers.append(console)
     root = logging.getLogger()
     root.setLevel(logging.INFO)
-    root.handlers = [file_handler, console]
+    root.handlers = handlers
     # httpx logs full request URLs, which contain the bot token and iCal token.
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -85,9 +94,51 @@ def main(argv: list[str] | None = None) -> int:
         log.info("Test alert sent.")
         return 0
 
+    lock = acquire_single_instance_lock(settings.data_dir / "uni_agent.lock")
+    if lock is None:
+        log.error("Another Uni Agent is already running (data/uni_agent.lock is held). Exiting.")
+        return 2
+    wait_for_telegram(settings)
     run_bot(settings, conn)
     conn.close()
     return 0
+
+
+def acquire_single_instance_lock(path):
+    """Hold an OS-level lock for the process lifetime; returns None if another instance has it.
+    The OS releases it automatically if the process dies, so a crash never leaves a stale lock."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    f = open(path, "a+")
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return None
+    return f  # keep the handle open
+
+
+def wait_for_telegram(settings: Settings, max_delay: float = 300.0) -> None:
+    """At login the network is often not up yet: retry with backoff instead of crashing."""
+    delay = 5.0
+    while True:
+        try:
+            asyncio.run(_get_me(settings))
+            return
+        except (NetworkError, TimedOut) as e:
+            log.warning("Telegram not reachable yet (%s); retrying in %.0fs", type(e).__name__, delay)
+            time.sleep(delay)
+            delay = min(delay * 2, max_delay)
+
+
+async def _get_me(settings: Settings) -> None:
+    async with Bot(settings.secrets.telegram_bot_token.get_secret_value()) as tg_bot:
+        await tg_bot.get_me()
 
 
 async def _send_once(settings: Settings, text: str) -> None:

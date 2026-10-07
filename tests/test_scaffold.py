@@ -37,3 +37,16 @@ def test_settings_load(tmp_path: Path, monkeypatch):
     assert s.secrets.telegram_chat_id == 12345
     assert s.course_name(s.course_folders[0]) == "CSIT205"
     assert str(s.tz) == "Asia/Dubai"
+
+
+def test_single_instance_lock(tmp_path: Path):
+    from uni_agent.main import acquire_single_instance_lock
+
+    lock_path = tmp_path / "uni_agent.lock"
+    first = acquire_single_instance_lock(lock_path)
+    assert first is not None
+    assert acquire_single_instance_lock(lock_path) is None  # a second agent must not start
+    first.close()
+    again = acquire_single_instance_lock(lock_path)
+    assert again is not None  # released when the first process ends
+    again.close()
