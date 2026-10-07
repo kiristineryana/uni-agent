@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import logging
 import sys
+from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -100,6 +101,14 @@ def run_bot(settings: Settings, conn) -> None:
     async def post_init(app: Application) -> None:
         notify.configure(notify.Notifier(app.bot, settings.secrets.telegram_chat_id))
         db.kv_set(conn, "started_at", db.iso(db.utcnow()))
+        sch = settings.schedules
+        now = datetime.now(settings.tz)
+        # Sync first, then check alerts shortly after, so a fresh feed is alerted on at startup.
+        scheduler.add_job(orch.run_ical_sync, "interval", minutes=sch.ingest_every_minutes,
+                          next_run_time=now, id="ical_sync", max_instances=1, coalesce=True)
+        scheduler.add_job(orch.run_deadline_check, "interval", minutes=sch.deadline_check_every_minutes,
+                          next_run_time=now + timedelta(seconds=30), id="deadline_check",
+                          max_instances=1, coalesce=True)
         scheduler.start()
         log.info("Bot started; long polling.")
         await notify.send_telegram("🟢 Uni Agent is online. /help for commands.")

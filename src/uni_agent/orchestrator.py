@@ -1,11 +1,16 @@
 """Routes commands and events to sub-agents. The only place that knows which agent does what."""
 from __future__ import annotations
 
+import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from . import db
+from . import db, notify
+from .agents import deadlines, ingest
 from .config import Settings
+from .sources import moodle_ical
+
+log = logging.getLogger(__name__)
 
 HELP_TEXT = """🎓 Uni Agent
 
@@ -17,6 +22,8 @@ HELP_TEXT = """🎓 Uni Agent
 /stop – end a quiz
 /week – weekly review now
 /status – sync time, docs, next alerts, LLM usage
+/sync – pull Moodle deadlines now
+/fakedeadline <min> – test alert (fake item due in <min> minutes)
 /help – this message
 
 Send a file with no command and I'll ask whether it's a lecture or a lab."""
@@ -33,6 +40,45 @@ class Orchestrator:
 
     def help(self) -> str:
         return HELP_TEXT
+
+    # --- deadlines -------------------------------------------------------
+
+    def deadlines(self) -> str:
+        now = db.utcnow()
+        days = self.settings.deadlines_window_days
+        items = deadlines.upcoming(self.conn, now, timedelta(days=days))
+        return deadlines.deadlines_text(items, now, self.settings.tz, days)
+
+    async def run_ical_sync(self) -> str:
+        url = self.settings.secrets.moodle_ical_url
+        if not url:
+            return "Moodle feed not configured (MOODLE_ICAL_URL)."
+        try:
+            raw = await moodle_ical.fetch(url.get_secret_value())
+            items = moodle_ical.parse(raw, self.settings.tz)
+        except Exception as e:  # FeedError, or a parse error on a malformed feed
+            msg = str(e) if isinstance(e, moodle_ical.FeedError) else f"could not parse feed ({type(e).__name__})"
+            log.warning("iCal sync failed: %s", msg)
+            return f"Moodle sync failed: {msg}"
+        added, updated = ingest.upsert_items(self.conn, items)
+        db.kv_set(self.conn, "last_ical_sync", db.iso(db.utcnow()))
+        log.info("iCal sync: %d events, %d new, %d updated", len(items), added, updated)
+        return f"Moodle sync OK: {len(items)} events ({added} new, {updated} updated)."
+
+    async def run_deadline_check(self) -> int:
+        now = db.utcnow()
+        sent = 0
+        for item, labels in deadlines.pending_alerts(self.conn, now, self.settings.alert_offsets):
+            await notify.send_telegram(deadlines.alert_text(item, now, self.settings.tz))
+            deadlines.mark_sent(self.conn, item.id, labels, now)
+            sent += 1
+        return sent
+
+    async def add_fake_deadline(self, minutes: int) -> str:
+        due = db.utcnow() + timedelta(minutes=minutes)
+        ingest.add_manual_item(self.conn, f"Fake test assignment ({minutes} min)", "TEST", due, source="fake")
+        await self.run_deadline_check()
+        return f"Added a fake deadline due {deadlines.fmt_due(due, self.settings.tz)} and ran the alert check."
 
     def _fmt_local(self, iso_utc: str | None) -> str:
         if not iso_utc:
