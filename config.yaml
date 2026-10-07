@@ -1,0 +1,42 @@
+timezone: Asia/Dubai
+
+# Each folder is one course; the folder name becomes the course name.
+# Files are tagged lecture/lab by filename; a "lectures" or "labs" subfolder inside a
+# course folder forces the kind. If unsure, the bot asks "Lecture or Lab?" on Telegram.
+course_folders:
+  - C:/Users/YOU/Desktop/UOWD/205
+  - C:/Users/YOU/Desktop/UOWD/214
+  - C:/Users/YOU/Desktop/UOWD/235
+
+# Optional display names for course folders.
+course_names:
+  "205": CSIT205
+  "214": CSIT214
+  "235": CSCI235
+
+# Files matching any of these globs are never processed (e.g. your own submissions).
+ignore_patterns:
+  - "*1234567*"
+  - "~$*"
+
+# On first sight of a folder, mark existing files as seen without summarising them.
+backfill_existing: false
+
+llm:
+  provider: anthropic          # anthropic | gemini
+  anthropic_model: claude-sonnet-5-5
+  gemini_model: gemini-2.5-flash
+  daily_token_cap: 400000      # input + output tokens per day
+
+schedules:
+  ingest_every_minutes: 30
+  deadline_check_every_minutes: 15
+  weekly_review: {day_of_week: sun, hour: 18, minute: 0}
+
+alert_offsets:                 # label -> minutes before due
+  7d: 10080
+  3d: 4320
+  1d: 1440
+  3h: 180
+
+deadlines_window_days: 14

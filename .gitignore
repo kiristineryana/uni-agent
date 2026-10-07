@@ -1,0 +1,14 @@
+# secrets
+.env
+
+# runtime state
+data/
+logs/
+*.log
+
+# python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
