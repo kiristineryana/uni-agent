@@ -13,6 +13,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from . import db, notify
 from .agents import deadlines, exam, ingest, lab, lecture, weekly
 from .config import Settings
+from .errors import ErrorReporter
 from .extract import extract_text, has_real_text, sha256_file
 from .llm import LLM, LLMError
 from .sources import folder_watch, moodle_ical
@@ -20,6 +21,7 @@ from .sources import folder_watch, moodle_ical
 log = logging.getLogger(__name__)
 
 AGENTS = {"lecture": lecture, "lab": lab}
+ICAL_FAILURES_BEFORE_ALERT = 3
 
 
 @dataclass
@@ -61,6 +63,8 @@ class Orchestrator:
         self._doc_lock = asyncio.Lock()  # one LLM job at a time (free-tier rate limits)
         self._failed_notified: set[str] = set()
         self.quiz: QuizSession | None = None
+        self.errors = ErrorReporter(conn)
+        self._ical_failures = 0
 
     # --- documents -------------------------------------------------------
 
@@ -322,7 +326,17 @@ class Orchestrator:
         except Exception as e:  # FeedError, or a parse error on a malformed feed
             msg = str(e) if isinstance(e, moodle_ical.FeedError) else f"could not parse feed ({type(e).__name__})"
             log.warning("iCal sync failed: %s", msg)
+            self._ical_failures += 1
+            if self._ical_failures == ICAL_FAILURES_BEFORE_ALERT:  # ~1.5 h of failures, alert once
+                await self.errors.report("ical", f"Moodle sync has failed {self._ical_failures} times in a row "
+                                                 f"({msg}). Deadlines may be out of date.")
             return f"Moodle sync failed: {msg}"
+        if self._ical_failures >= ICAL_FAILURES_BEFORE_ALERT:
+            try:
+                await notify.send_telegram("✅ Moodle sync is working again.")
+            except Exception:
+                pass
+        self._ical_failures = 0
         added, updated = ingest.upsert_items(self.conn, items)
         db.kv_set(self.conn, "last_ical_sync", db.iso(db.utcnow()))
         log.info("iCal sync: %d events, %d new, %d updated", len(items), added, updated)
@@ -373,4 +387,11 @@ class Orchestrator:
             f"Next deadline: {next_item}\n"
             f"LLM today: {used:,} / {self.settings.llm.daily_token_cap:,} tokens "
             f"({self.settings.llm.provider}{'' if self.llm else ', no API key'})"
-        )
+        ) + self._last_error_line()
+
+    def _last_error_line(self) -> str:
+        raw = db.kv_get(self.conn, "last_error")
+        if not raw:
+            return ""
+        when, _, text = raw.partition(" ")
+        return f"\nLast problem: {self._fmt_local(when)} – {text}"

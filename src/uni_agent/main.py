@@ -9,6 +9,7 @@ import time
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 
+from apscheduler.events import EVENT_JOB_ERROR
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Bot, Update
 from telegram.error import NetworkError, TimedOut
@@ -152,7 +153,10 @@ def run_bot(settings: Settings, conn) -> None:
     scheduler = AsyncIOScheduler(timezone=settings.tz)
     watcher = FolderWatcher(settings.course_folders, settings.ignore_patterns, orch.on_new_file)
 
+    loop_ref: list[asyncio.AbstractEventLoop] = []
+
     async def post_init(app: Application) -> None:
+        loop_ref.append(asyncio.get_running_loop())
         notify.configure(notify.Notifier(app.bot, settings.secrets.telegram_chat_id))
         db.kv_set(conn, "started_at", db.iso(db.utcnow()))
         await asyncio.to_thread(orch.baseline_folders)
@@ -186,6 +190,17 @@ def run_bot(settings: Settings, conn) -> None:
         .build()
     )
     bot.register(app, orch, settings.secrets.telegram_chat_id)
+
+    async def on_handler_error(update: object, context) -> None:
+        await orch.errors.report_exception("Telegram handler", context.error)
+
+    def on_job_error(event) -> None:  # may run outside the loop thread, so hand over thread-safely
+        if event.exception is not None and loop_ref:
+            asyncio.run_coroutine_threadsafe(
+                orch.errors.report_exception(f"Job {event.job_id}", event.exception), loop_ref[0])
+
+    app.add_error_handler(on_handler_error)
+    scheduler.add_listener(on_job_error, EVENT_JOB_ERROR)
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False)
 
 
