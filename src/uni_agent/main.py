@@ -132,7 +132,7 @@ def run_bot(settings: Settings, conn) -> None:
         .build()
     )
     bot.register(app, orch, settings.secrets.telegram_chat_id)
-    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False)
 
 
 if __name__ == "__main__":

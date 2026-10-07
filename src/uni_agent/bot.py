@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, TypeHandler, filters
 
 from .extract import SUPPORTED
 from .orchestrator import Orchestrator, is_allowed
@@ -52,8 +52,12 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
             return
         doc = update.message.document
         kind = context.user_data.pop("next_kind", None)
+        caption = (update.message.caption or "").strip().lower()
+        if caption.startswith("/lecture"):
+            kind = "lecture"
         if kind is None:
-            await update.message.reply_text("Send /lecture first, then the file.")
+            await update.message.reply_text("Send /lecture first, then the file "
+                                            "(or put /lecture in the file's caption).")
             return
         if Path(doc.file_name or "").suffix.lower() not in SUPPORTED:
             await update.message.reply_text("I can read PDF, PPTX, DOCX, TXT and MD files.")
@@ -75,6 +79,22 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
         if await guard(update) and update.message:
             await update.message.reply_text("I don't know that one yet. Try /help.")
 
+    async def log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        # Log the shape of every incoming update (never message text or file contents).
+        msg = update.effective_message
+        if msg is None:
+            what = "non-message update"
+        elif msg.document:
+            what = f"document {Path(msg.document.file_name or '').suffix or '?'}"
+            what += " with caption" if msg.caption else ""
+        elif msg.text and msg.text.startswith("/"):
+            what = f"command {msg.text.split()[0]}"
+        else:
+            what = "photo" if msg.photo else "voice" if msg.voice else "text" if msg.text else "other message"
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        log.info("Incoming %s (allowed chat: %s)", what, is_allowed(chat_id, allowed_chat_id))
+
+    app.add_handler(TypeHandler(Update, log_update), group=-1)
     app.add_handler(CommandHandler(["start", "help"], start))
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("deadlines", deadlines_cmd))
