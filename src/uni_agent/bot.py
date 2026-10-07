@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from telegram import Update
+from telegram.constants import ChatAction
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, TypeHandler, filters
 
 from .extract import SUPPORTED
@@ -96,6 +97,38 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
         text = await orch.resolve_kind(int(doc_id), kind)
         await query.edit_message_text(text)
 
+    async def quiz_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await guard(update):
+            return
+        args = context.args or []
+        kinds = {"lectures": "lecture", "lecture": "lecture", "labs": "lab", "lab": "lab"}
+        if not args or args[0].lower() not in kinds:
+            await update.message.reply_text("Usage: /quiz lectures <topic or week>  or  /quiz labs <topic or week>\n"
+                                            "e.g. /quiz lectures normalization, /quiz labs week 3, /quiz lectures 205")
+            return
+        topic = " ".join(args[1:]).strip() or None
+        await update.message.reply_text("Preparing questions…")
+        await update.message.chat.send_action(ChatAction.TYPING)
+        await update.message.reply_text(await orch.quiz_start(kinds[args[0].lower()], topic))
+
+    async def skip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if await guard(update):
+            await update.message.reply_text(orch.quiz_skip() or "No quiz running.")
+
+    async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if await guard(update):
+            await update.message.reply_text(orch.quiz_stop())
+
+    async def text_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await guard(update):
+            return
+        if orch.quiz is None:
+            await update.message.reply_text("I don't know that one yet. Try /help.")
+            return
+        await update.message.chat.send_action(ChatAction.TYPING)
+        reply = await orch.quiz_answer(update.message.text)
+        await update.message.reply_text(reply or "No question is waiting for an answer.")
+
     async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await guard(update) and update.message:
             await update.message.reply_text("I don't know that one yet. Try /help.")
@@ -126,5 +159,9 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
     app.add_handler(CommandHandler("lecture", lecture_cmd))
     app.add_handler(CommandHandler("lab", lab_cmd))
     app.add_handler(CallbackQueryHandler(kind_button, pattern=r"^kind:"))
+    app.add_handler(CommandHandler("quiz", quiz_cmd))
+    app.add_handler(CommandHandler("skip", skip_cmd))
+    app.add_handler(CommandHandler("stop", stop_cmd))
     app.add_handler(MessageHandler(filters.Document.ALL, document))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_msg))
     app.add_handler(MessageHandler(filters.ALL, fallback))

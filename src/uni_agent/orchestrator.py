@@ -4,13 +4,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from . import db, notify
-from .agents import deadlines, ingest, lab, lecture
+from .agents import deadlines, exam, ingest, lab, lecture
 from .config import Settings
 from .extract import extract_text, has_real_text, sha256_file
 from .llm import LLM, LLMError
@@ -20,6 +21,15 @@ log = logging.getLogger(__name__)
 
 AGENTS = {"lecture": lecture, "lab": lab}
 
+
+@dataclass
+class QuizSession:
+    kind: str
+    queue: list[int]
+    current: int | None = None
+    asked: int = 0
+    score: float = 0.0
+
 HELP_TEXT = """🎓 Uni Agent
 
 /deadlines – what's due in the next 14 days
@@ -28,6 +38,7 @@ HELP_TEXT = """🎓 Uni Agent
   (e.g. /lab 235, or put "/lab 235" in the file's caption)
 /quiz lectures <topic> – theory quiz
 /quiz labs <topic> – practical/viva quiz
+/skip – skip a quiz question
 /stop – end a quiz
 /week – weekly review now
 /status – sync time, docs, next alerts, LLM usage
@@ -49,6 +60,7 @@ class Orchestrator:
         self.llm = llm
         self._doc_lock = asyncio.Lock()  # one LLM job at a time (free-tier rate limits)
         self._failed_notified: set[str] = set()
+        self.quiz: QuizSession | None = None
 
     # --- documents -------------------------------------------------------
 
@@ -191,6 +203,91 @@ class Orchestrator:
             ingest.record_document(self.conn, path, sha, kind, course, out)
             self._failed_notified.discard(sha)
         await notify.send_telegram(summary)
+
+    # --- quiz (Exam agent) -----------------------------------------------
+
+    async def quiz_start(self, kind: str, topic: str | None) -> str:
+        if self.llm is None:
+            return "Quizzes need an LLM: LLM_API_KEY is not set."
+        label = "lecture" if kind == "lecture" else "lab"
+        docs = exam.matching_docs(self.conn, kind, topic)
+        if not docs:
+            have = exam.matching_docs(self.conn, kind, None)
+            hint = ("\nI have: " + ", ".join(sorted({f"{d['course']}: {ingest.title_from_path(Path(d['path']))}"
+                                                     for d in have}))) if have else \
+                f"\nNo {label} summaries yet. Send one with /{label} first."
+            return f"No {label} summaries match '{topic}'.{hint}"
+        try:
+            async with self._doc_lock:
+                generated = 0
+                for d in docs:  # generate once per document; at most 3 per start to spare the free tier
+                    if exam.question_count(self.conn, d["id"]) or generated >= 3:
+                        continue
+                    summary = exam.read_summary(d["summary_path"])
+                    qs = await asyncio.to_thread(exam.generate_questions, self.llm, summary, kind,
+                                                 ingest.title_from_path(Path(d["path"])))
+                    exam.store_questions(self.conn, d["id"], kind, qs)
+                    generated += 1
+        except LLMError as e:
+            return f"⚠️ Couldn't prepare questions: {e}"
+        ids = exam.pick_questions(self.conn, [d["id"] for d in docs], db.utcnow(), limit=10)
+        if not ids:
+            return "⚠️ No questions available yet. Try again later."
+        self.quiz = QuizSession(kind, ids)
+        style = "theory" if kind == "lecture" else "practical / viva"
+        scope = f" on '{topic}'" if topic else ""
+        return (f"🎯 {style.capitalize()} quiz{scope}: {len(ids)} questions from {len(docs)} "
+                f"{label}{'s' if len(docs) != 1 else ''}. Reply with your answer; /skip if you don't know, "
+                f"/stop to finish.\n\n" + self._next_question())
+
+    def _next_question(self) -> str:
+        q = self.quiz
+        if not q.queue:
+            return self._finish_quiz()
+        q.current = q.queue.pop(0)
+        q.asked += 1
+        row = self.conn.execute("SELECT topic, question FROM quiz_questions WHERE id = ?", (q.current,)).fetchone()
+        return f"Q{q.asked} · {row['topic']}\n{row['question']}"
+
+    def _finish_quiz(self) -> str:
+        q, self.quiz = self.quiz, None
+        answered = q.asked - (1 if q.current is not None else 0)
+        if answered <= 0:
+            return "Quiz ended."
+        return f"🏁 Quiz finished: {q.score:g} / {answered} ({round(100 * q.score / answered)}%)."
+
+    async def quiz_answer(self, reply: str) -> str | None:
+        """Returns None when no quiz is running (the message isn't for the Exam agent)."""
+        q = self.quiz
+        if q is None or q.current is None:
+            return None
+        row = self.conn.execute("SELECT question, answer FROM quiz_questions WHERE id = ?", (q.current,)).fetchone()
+        try:
+            async with self._doc_lock:
+                verdict, explanation = await asyncio.to_thread(
+                    exam.mark_answer, self.llm, row["question"], row["answer"], reply)
+        except LLMError as e:
+            return f"⚠️ Couldn't mark that ({e}). Send your answer again, /skip, or /stop."
+        return self._record_and_continue(verdict, explanation, row["answer"])
+
+    def quiz_skip(self) -> str | None:
+        q = self.quiz
+        if q is None or q.current is None:
+            return None
+        row = self.conn.execute("SELECT answer FROM quiz_questions WHERE id = ?", (q.current,)).fetchone()
+        return self._record_and_continue("wrong", "Skipped; this one comes back soon.", row["answer"])
+
+    def _record_and_continue(self, verdict: str, explanation: str, model_answer: str) -> str:
+        q = self.quiz
+        exam.record_answer(self.conn, q.current, verdict, db.utcnow())
+        q.score += exam.SCORES[verdict]
+        q.current = None
+        return exam.feedback_text(verdict, explanation, model_answer) + "\n\n" + self._next_question()
+
+    def quiz_stop(self) -> str:
+        if self.quiz is None:
+            return "No quiz running."
+        return self._finish_quiz()  # an unanswered current question isn't counted
 
     def help(self) -> str:
         return HELP_TEXT
