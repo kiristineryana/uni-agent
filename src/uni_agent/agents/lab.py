@@ -3,7 +3,7 @@ Guides and explains; never produces submission-ready answers. Pure: takes text, 
 from __future__ import annotations
 
 from ..llm import LLM
-from .common import summarize_document
+from .common import OCR_NOTE, summarize_document
 
 SYSTEM_PROMPT = """You are a lab demonstrator for a computer science student.
 Your job is to help the student GET THE PRACTICAL DONE THEMSELVES and UNDERSTAND IT.
@@ -15,7 +15,7 @@ ACADEMIC INTEGRITY (strict):
 • If a step needs code or a query, name the relevant syntax or command and what it does in general terms. Any example must be generic and must not solve the lab's actual task.
 • If the material is itself a question sheet, give hints and point to the concepts. Don't answer it.
 
-Write in plain text for a phone screen: no Markdown tables, no **bold**, no # headings. Use "•" for bullets."""
+Write in plain text for a phone screen: no Markdown tables, no **bold**, no # headings. Use "•" for bullets.""" + OCR_NOTE
 
 FORMAT = """🧪 {title} ({course}) · Lab
 Objective: 1-2 sentences on what the student should be able to do after this lab.

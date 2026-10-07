@@ -40,7 +40,9 @@ The agent watches the course folders in `config.yaml` (`course_folders`). Drop a
 
 Files matching `ignore_patterns` (e.g. your own submissions with your student ID) are never processed.
 Files that were already in the folders on first run are marked as seen and not summarised; send any of them with `/lecture` or `/lab` to summarise it.
-Identical files are only ever processed once. Scanned PDFs or image-only slides have no text to read and are skipped.
+Identical files are only ever processed once.
+
+**Image-only slides and scanned PDFs/DOCX** are read with the OCR engine built into Windows (`ocr_enabled` in `config.yaml`). It runs locally, costs nothing, and only kicks in for slides/pages with almost no real text (about 0.3 s per image). The recognised text is marked so the summariser expects small OCR errors.
 
 ## Setup (from scratch)
 
@@ -98,7 +100,7 @@ Summaries are saved as Markdown in `data\summaries\lectures\` and `data\summarie
 | "Chat not found" | Open your bot in Telegram and press **Start**; check `TELEGRAM_CHAT_ID` |
 | "Another Uni Agent is already running" | Expected if the task is running; stop it before starting a terminal copy |
 | "Gemini free-tier limit reached (429)" | Daily free quota used up; try tomorrow, or switch provider |
-| "no readable text" | The file is scanned/image-only; the agent can't read it (yet) |
+| "no readable text" | Even OCR found nothing (blank/handwritten/very low-res images). Check `ocr_enabled: true` |
 | Alerts for lab sections you're not in | Add part of their titles to `deadline_ignore` in `config.yaml` |
 
 ## Layout

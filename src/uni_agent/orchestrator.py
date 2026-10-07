@@ -15,6 +15,7 @@ from .agents import deadlines, exam, ingest, lab, lecture, weekly
 from .config import Settings
 from .errors import ErrorReporter
 from .extract import extract_text, has_real_text, sha256_file
+from .ocr import get_ocr
 from .llm import LLM, LLMError
 from .sources import folder_watch, moodle_ical
 
@@ -65,6 +66,7 @@ class Orchestrator:
         self.quiz: QuizSession | None = None
         self.errors = ErrorReporter(conn)
         self._ical_failures = 0
+        self.ocr = get_ocr() if settings.ocr_enabled else None
 
     # --- documents -------------------------------------------------------
 
@@ -169,10 +171,11 @@ class Orchestrator:
             if not from_upload and row and row["status"] not in ("pending_kind", "queued"):
                 return  # the watcher and the periodic scan both saw it; the first one handled it
             try:
-                text = await asyncio.to_thread(extract_text, path)
+                text = await asyncio.to_thread(extract_text, path, self.ocr)
                 if not has_real_text(text):
-                    await notify.send_telegram(
-                        f"⚠️ {path.name}: no readable text (scanned PDF or image-only slides?). Skipped.")
+                    why = ("even OCR found no text in its images" if self.ocr
+                           else "scanned PDF or image-only slides? OCR is off")
+                    await notify.send_telegram(f"⚠️ {path.name}: no readable text ({why}). Skipped.")
                     ingest.record_document(self.conn, path, sha, kind, course, None, status="no_text")
                     return
                 if not from_upload:

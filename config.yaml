@@ -19,6 +19,9 @@ ignore_patterns:
   - "*1234567*"
   - "~$*"
 
+# Read text from image-only slides / scanned pages with the OCR built into Windows (runs locally).
+ocr_enabled: true
+
 # On first sight of a folder, mark existing files as seen without summarising them.
 backfill_existing: false
 

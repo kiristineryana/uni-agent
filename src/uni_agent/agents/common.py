@@ -10,6 +10,10 @@ Plain text, bullets with "•".
 
 {chunk}"""
 
+OCR_NOTE = """
+Text after "[OCR from image]" was read from slide images by OCR: expect small recognition errors
+(l/I/1, O/0, broken table rows). Interpret it sensibly and never quote obvious OCR garbage."""
+
 OUTPUT_RULE = ("Output ONLY the structure below, starting with its first line. "
                "Do not repeat these instructions or the context section.")
 

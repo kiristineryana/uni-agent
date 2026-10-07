@@ -19,6 +19,7 @@ Full spec: `UNI_AGENT_BUILD_SPEC.md`. Build proceeds phase by phase (section 7);
 ## Decisions (differ from spec defaults)
 - Watched folders are per-course: `C:/Users/YOU/Desktop/UOWD/{205,214,235}` with lectures and labs mixed.
   Kind = `lectures/`/`labs/` subfolder if present, else filename heuristic, else ask via Telegram buttons.
+- OCR: Windows built-in engine via `winrt` (`ocr.py`), only for slides/pages with <40 chars of real text; output marked `[OCR from image]`.
 - Files matching `ignore_patterns` (student ID = own submissions) are skipped.
 - First run marks existing files as seen (no backfill summaries).
 - LLM default: Gemini free tier (~20 requests/day on Flash), so send each document in ONE request where possible; Anthropic is switchable. Timezone Asia/Dubai.

@@ -53,6 +53,7 @@ class Settings(BaseModel):
     )
     deadlines_window_days: int = 14
     deadline_ignore: list[str] = Field(default_factory=list)
+    ocr_enabled: bool = True
     data_dir: Path = PROJECT_ROOT / "data"
     log_dir: Path = PROJECT_ROOT / "logs"
     secrets: Secrets = Secrets()
