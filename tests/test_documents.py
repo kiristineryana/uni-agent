@@ -1,9 +1,10 @@
+import asyncio
 from pathlib import Path
 
 import pytest
 
 from uni_agent import db
-from uni_agent.agents import ingest, lecture
+from uni_agent.agents import ingest, lab, lecture
 from uni_agent.config import Settings
 from uni_agent.extract import chunk_text, has_real_text, sha256_file
 from uni_agent.llm import LLM, BudgetExceeded, LLMResult
@@ -169,7 +170,7 @@ async def test_file_in_labs_folder_never_reaches_lecture_agent(orch):
     f = course / "labs" / "Week 3 Lecture recap.pdf"  # misleading name, but it's in labs/
     f.write_bytes(b"lab bytes")
     await o.on_new_file(FoundFile(f, course, guess_kind(f, course)))
-    assert all(kind != "lecture" for _, kind, _ in o.routed)
+    assert o.routed == [("Week 3 Lecture recap.pdf", "lab", "CSCI235")]
 
 
 async def test_duplicate_content_processed_once(orch):
@@ -192,3 +193,70 @@ async def test_baseline_marks_existing_files_without_processing(orch):
     (course / "week2lecture1.pptx").write_bytes(b"new lecture")
     await o.scan_folders()
     assert [r[0] for r in o.routed] == ["week2lecture1.pptx"]
+
+
+async def test_lab_named_file_routes_to_lab_agent(orch):
+    o, course = orch
+    f = course / "CSCI235_Lab_4_sheet.pdf"
+    f.write_bytes(b"lab sheet")
+    await o.scan_folders()
+    assert o.routed == [("CSCI235_Lab_4_sheet.pdf", "lab", "CSCI235")]
+
+
+async def test_unsure_file_is_asked_once_then_routed_by_button(orch):
+    o, course = orch
+    f = course / "Week 4 notes.pdf"  # no lecture/lab hint
+    f.write_bytes(b"ambiguous")
+    await o.scan_folders()
+    await o.scan_folders()  # periodic rescan must not ask again or process it
+    assert o.routed == []
+    row = o.conn.execute("SELECT id, status FROM documents").fetchone()
+    assert row["status"] == "pending_kind"
+
+    assert "Lab" in await o.resolve_kind(row["id"], "lab")
+    await asyncio.sleep(0)  # let the background task run
+    assert o.routed == [("Week 4 notes.pdf", "lab", "CSCI235")]
+    assert await o.resolve_kind(row["id"], "lecture") == "Already handled."
+
+
+def test_course_from_arg(orch):
+    o, _ = orch
+    assert o.course_from_arg("235") == "CSCI235"
+    assert o.course_from_arg("csci235") == "CSCI235"
+    assert o.course_from_arg("PROJ085") == "PROJ085"
+    assert o.course_from_arg(None) is None
+
+
+# --- real dispatch: the right agent's prompt reaches the LLM ---
+
+class RecordingProvider(FakeProvider):
+    def complete(self, system, prompt, max_tokens):
+        self.calls.append((system, prompt))
+        return LLMResult("summary text", 10, 10)
+
+
+@pytest.mark.parametrize("kind,agent", [("lecture", lecture), ("lab", lab)])
+async def test_process_document_uses_the_agent_for_its_kind(tmp_path, kind, agent):
+    conn = db.connect(":memory:")
+    s = Settings(data_dir=tmp_path / "data")
+    provider = RecordingProvider()
+    o = Orchestrator(s, conn, LLM(provider, conn, 10**9, s.tz))
+    f = tmp_path / "doc.txt"
+    f.write_text("## Section\n" + "Normalization and functional dependencies. " * 20)
+    await o.process_document(f, kind, "CSCI235", "sha-" + kind)
+    [(system, prompt)] = provider.calls
+    assert system == agent.SYSTEM_PROMPT
+    other = lab if agent is lecture else lecture
+    assert system != other.SYSTEM_PROMPT
+    row = conn.execute("SELECT kind, summary_path FROM documents").fetchone()
+    assert row["kind"] == kind
+    assert Path(row["summary_path"]).parent.parent.name == ("lectures" if kind == "lecture" else "labs")
+
+
+def test_lab_prompt_has_integrity_rules_and_deadlines():
+    llm = make_llm(cap=10**9, reply="🧪")
+    lab.summarize(llm, "## Lab\nCreate tables", "Lab 4", "CSCI235", [], 10_000, ["Lab 4 Submission: Sun 11 Oct, 23:55"])
+    prompt = llm.provider.calls[0]
+    assert "Lab 4 Submission: Sun 11 Oct, 23:55" in prompt
+    assert "Never write the graded answers" in lab.SYSTEM_PROMPT
+    assert "Viva questions" in prompt and "Submission checklist" in prompt

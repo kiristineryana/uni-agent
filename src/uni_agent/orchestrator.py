@@ -7,8 +7,10 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
 from . import db, notify
-from .agents import deadlines, ingest, lecture
+from .agents import deadlines, ingest, lab, lecture
 from .config import Settings
 from .extract import extract_text, has_real_text, sha256_file
 from .llm import LLM, LLMError
@@ -16,11 +18,14 @@ from .sources import folder_watch, moodle_ical
 
 log = logging.getLogger(__name__)
 
+AGENTS = {"lecture": lecture, "lab": lab}
+
 HELP_TEXT = """🎓 Uni Agent
 
 /deadlines – what's due in the next 14 days
-/lecture – then send a file: lecture summary
-/lab – then send a file: lab briefing
+/lecture [course] – then send a file: lecture summary
+/lab [course] – then send a file: lab briefing
+  (e.g. /lab 235, or put "/lab 235" in the file's caption)
 /quiz lectures <topic> – theory quiz
 /quiz labs <topic> – practical/viva quiz
 /stop – end a quiz
@@ -72,38 +77,80 @@ class Orchestrator:
             await self.on_new_file(f)
 
     async def on_new_file(self, f: folder_watch.FoundFile) -> None:
-        """Route a file from a watched folder to the agent for its kind."""
+        """Route a file from a watched folder: lectures -> Lecture agent, labs -> Lab agent, unsure -> ask."""
         sha = await asyncio.to_thread(sha256_file, f.path)
         if ingest.known_document(self.conn, sha):
             return
         course = self.settings.course_name(f.course_folder)
-        if f.kind == "lecture":
-            await self.process_document(f.path, "lecture", course, sha)
+        if f.kind is None:
+            await self.ask_kind(f.path, course, sha)
         else:
-            # Lab agent and the "Lecture or Lab?" question arrive in Phase 3b.
-            log.info("Skipping %s for now (kind=%s; handled from Phase 3b)", f.path.name, f.kind)
+            await self.process_document(f.path, f.kind, course, sha)
 
-    async def process_upload(self, path: Path, kind: str) -> None:
+    async def ask_kind(self, path: Path, course: str, sha: str) -> None:
+        """Record the file as waiting for a decision and ask with two buttons. Survives restarts."""
+        ingest.record_document(self.conn, path, sha, None, course, None, status="pending_kind")
+        doc_id = ingest.known_document(self.conn, sha)["id"]
+        buttons = InlineKeyboardMarkup([[
+            InlineKeyboardButton("📘 Lecture", callback_data=f"kind:{doc_id}:lecture"),
+            InlineKeyboardButton("🧪 Lab", callback_data=f"kind:{doc_id}:lab"),
+        ]])
+        await notify.send_telegram(f"📄 {path.name} ({course})\nLecture or Lab?", reply_markup=buttons)
+
+    async def resolve_kind(self, doc_id: int, kind: str) -> str:
+        """Button pressed. Returns the text to put on the question message."""
+        row = self.conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
+        if row is None or row["status"] != "pending_kind":
+            return "Already handled."
+        path = Path(row["path"])
+        if not path.exists():
+            return f"{path.name} no longer exists."
+        with self.conn:  # a second press of either button is now "Already handled"
+            self.conn.execute("UPDATE documents SET status = 'queued' WHERE id = ?", (doc_id,))
+        asyncio.create_task(self.process_document(path, kind, row["course"], row["sha256"], from_upload=True))
+        return f"{path.name} → {'📘 Lecture' if kind == 'lecture' else '🧪 Lab'}. Working on it…"
+
+    async def process_upload(self, path: Path, kind: str | None, course: str | None = None) -> None:
+        """A file sent in Telegram. kind=None means no command was given, so ask."""
         sha = await asyncio.to_thread(sha256_file, path)
+        course = course or ingest.guess_course(path.name, self.settings.course_names) or "Uploads"
         row = ingest.known_document(self.conn, sha)
-        if row and row["summary_path"] and row["kind"] == kind and Path(row["summary_path"]).exists():
+        if kind and row and row["summary_path"] and row["kind"] == kind and Path(row["summary_path"]).exists():
             await notify.send_telegram("Already summarised; here it is again:\n\n"
                                        + Path(row["summary_path"]).read_text(encoding="utf-8"))
             return
-        course = ingest.guess_course(path.name, self.settings.course_names) or "Uploads"
-        await self.process_document(path, kind, course, sha, from_upload=True)
+        if kind is None:
+            await self.ask_kind(path, course, sha)
+        else:
+            await self.process_document(path, kind, course, sha, from_upload=True)
+
+    def course_from_arg(self, arg: str | None) -> str | None:
+        """'/lecture 205' or '/lecture CSIT205' -> 'CSIT205'."""
+        if not arg:
+            return None
+        arg = arg.strip().upper()
+        for key, name in self.settings.course_names.items():
+            if arg in (key.upper(), name.upper()):
+                return name
+        return arg
+
+    def _lab_deadlines(self, course: str) -> list[str]:
+        items = deadlines.upcoming(self.conn, db.utcnow(), timedelta(days=21))
+        return [f"{i.title}: {deadlines.fmt_due(i.due_at, self.settings.tz)}"
+                for i in items if i.course == course and deadlines.kind_tag(i) == "🧪 "]
 
     async def process_document(self, path: Path, kind: str, course: str, sha: str,
                                from_upload: bool = False) -> None:
-        if kind != "lecture":
-            await notify.send_telegram("The Lab agent arrives in Phase 3b.")
-            return
+        if kind not in AGENTS:
+            raise ValueError(f"unknown kind {kind!r}")
         if self.llm is None:
             await notify.send_telegram(f"Can't summarise {path.name}: LLM_API_KEY is not set.")
             return
         title = ingest.title_from_path(path)
+        label = "lecture" if kind == "lecture" else "lab sheet"
         async with self._doc_lock:
-            if not from_upload and ingest.known_document(self.conn, sha):
+            row = ingest.known_document(self.conn, sha)
+            if not from_upload and row and row["status"] not in ("pending_kind", "queued"):
                 return  # the watcher and the periodic scan both saw it; the first one handled it
             try:
                 text = await asyncio.to_thread(extract_text, path)
@@ -113,16 +160,24 @@ class Orchestrator:
                     ingest.record_document(self.conn, path, sha, kind, course, None, status="no_text")
                     return
                 if not from_upload:
-                    await notify.send_telegram(f"📥 New lecture found: {title} ({course}). Summarising…")
+                    await notify.send_telegram(f"📥 New {label} found: {title} ({course}). Working on it…")
                 earlier = ingest.earlier_titles(self.conn, kind, course)
-                summary = await asyncio.to_thread(
-                    lecture.summarize, self.llm, text, title, course, earlier,
-                    self.settings.llm.max_single_request_chars)
+                max_chars = self.settings.llm.max_single_request_chars
+                if kind == "lab":
+                    summary = await asyncio.to_thread(lab.summarize, self.llm, text, title, course, earlier,
+                                                      max_chars, self._lab_deadlines(course))
+                else:
+                    summary = await asyncio.to_thread(lecture.summarize, self.llm, text, title, course, earlier,
+                                                      max_chars)
             except LLMError as e:
                 log.warning("Summary failed for %s: %s", path.name, e)
+                with self.conn:  # re-arm the Lecture/Lab buttons
+                    self.conn.execute("UPDATE documents SET status = 'pending_kind' "
+                                      "WHERE sha256 = ? AND status = 'queued'", (sha,))
                 if sha not in self._failed_notified:
                     self._failed_notified.add(sha)
-                    retry = "Send it again later." if from_upload else "I'll retry on the next scan."
+                    retry = ("Press the button again or resend it later." if from_upload
+                             else "I'll retry on the next scan.")
                     await notify.send_telegram(f"⚠️ Couldn't summarise {path.name}: {e} {retry}")
                 return
             except Exception as e:

@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, TypeHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, TypeHandler, filters
 
 from .extract import SUPPORTED
 from .orchestrator import Orchestrator, is_allowed
@@ -42,23 +43,29 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
             minutes = int(context.args[0]) if context.args and context.args[0].isdigit() else 1
             await update.message.reply_text(await orch.add_fake_deadline(minutes))
 
-    async def lecture_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def kind_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, kind: str) -> None:
         if await guard(update):
-            context.user_data["next_kind"] = "lecture"
-            await update.message.reply_text("📘 Send me the lecture file (PDF, PPTX, DOCX or TXT).")
+            context.user_data["next_kind"] = kind
+            context.user_data["next_course"] = orch.course_from_arg(context.args[0] if context.args else None)
+            icon, label = ("📘", "lecture") if kind == "lecture" else ("🧪", "lab sheet")
+            await update.message.reply_text(f"{icon} Send me the {label} (PDF, PPTX, DOCX or TXT).")
+
+    async def lecture_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await kind_cmd(update, context, "lecture")
+
+    async def lab_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await kind_cmd(update, context, "lab")
 
     async def document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await guard(update):
             return
         doc = update.message.document
         kind = context.user_data.pop("next_kind", None)
-        caption = (update.message.caption or "").strip().lower()
-        if caption.startswith("/lecture"):
-            kind = "lecture"
-        if kind is None:
-            await update.message.reply_text("Send /lecture first, then the file "
-                                            "(or put /lecture in the file's caption).")
-            return
+        course = context.user_data.pop("next_course", None)
+        caption = (update.message.caption or "").split()
+        if caption and caption[0].lower() in ("/lecture", "/lab"):
+            kind = caption[0].lower().lstrip("/")
+            course = orch.course_from_arg(caption[1] if len(caption) > 1 else None) or course
         if Path(doc.file_name or "").suffix.lower() not in SUPPORTED:
             await update.message.reply_text("I can read PDF, PPTX, DOCX, TXT and MD files.")
             return
@@ -66,14 +73,28 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
             await update.message.reply_text("Telegram only lets bots download files up to 20 MB. "
                                             "Put it in the course folder instead.")
             return
-        uploads = orch.settings.data_dir / "uploads"
-        uploads.mkdir(parents=True, exist_ok=True)
-        dest = uploads / Path(doc.file_name).name
+        # One folder per upload, so two different files with the same name never overwrite each other.
+        dest_dir = orch.settings.data_dir / "uploads" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / Path(doc.file_name).name
         tg_file = await doc.get_file()
         await tg_file.download_to_drive(dest)
-        await update.message.reply_text("Got it, summarising… (this can take a minute)")
+        if kind:
+            await update.message.reply_text("Got it, working on it… (this can take a minute)")
         # Run in the background so the bot stays responsive while the LLM works.
-        context.application.create_task(orch.process_upload(dest, kind))
+        context.application.create_task(orch.process_upload(dest, kind, course))
+
+    async def kind_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if not await guard(update):
+            await query.answer()
+            return
+        _, doc_id, kind = query.data.split(":")
+        await query.answer()
+        if kind not in ("lecture", "lab") or not doc_id.isdigit():
+            return
+        text = await orch.resolve_kind(int(doc_id), kind)
+        await query.edit_message_text(text)
 
     async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await guard(update) and update.message:
@@ -82,7 +103,9 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
     async def log_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Log the shape of every incoming update (never message text or file contents).
         msg = update.effective_message
-        if msg is None:
+        if update.callback_query:
+            what = "button press"
+        elif msg is None:
             what = "non-message update"
         elif msg.document:
             what = f"document {Path(msg.document.file_name or '').suffix or '?'}"
@@ -101,5 +124,7 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
     app.add_handler(CommandHandler("sync", sync_cmd))
     app.add_handler(CommandHandler("fakedeadline", fake_deadline))
     app.add_handler(CommandHandler("lecture", lecture_cmd))
+    app.add_handler(CommandHandler("lab", lab_cmd))
+    app.add_handler(CallbackQueryHandler(kind_button, pattern=r"^kind:"))
     app.add_handler(MessageHandler(filters.Document.ALL, document))
     app.add_handler(MessageHandler(filters.ALL, fallback))
