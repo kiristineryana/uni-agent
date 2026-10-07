@@ -51,6 +51,7 @@ class Settings(BaseModel):
         default_factory=lambda: {"7d": 10080, "3d": 4320, "1d": 1440, "3h": 180}
     )
     deadlines_window_days: int = 14
+    deadline_ignore: list[str] = Field(default_factory=list)
     data_dir: Path = PROJECT_ROOT / "data"
     log_dir: Path = PROJECT_ROOT / "logs"
     secrets: Secrets = Secrets()

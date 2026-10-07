@@ -23,7 +23,7 @@ ignore_patterns:
 backfill_existing: false
 
 llm:
-  provider: anthropic          # anthropic | gemini
+  provider: gemini             # anthropic | gemini
   anthropic_model: claude-sonnet-5-5
   gemini_model: gemini-2.5-flash
   daily_token_cap: 400000      # input + output tokens per day
@@ -40,3 +40,7 @@ alert_offsets:                 # label -> minutes before due
   3h: 180
 
 deadlines_window_days: 14
+
+# Moodle events whose title contains any of these (case-insensitive) are ignored,
+# e.g. lab sections you're not in: ["TutorName_Monday"]
+deadline_ignore: []

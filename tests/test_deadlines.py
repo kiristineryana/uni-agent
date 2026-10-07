@@ -67,6 +67,17 @@ def test_parse_moodle_feed():
     assert lab.due_at.astimezone(DUBAI) == datetime(2026, 10, 20, 23, 59, tzinfo=DUBAI)
 
 
+@pytest.mark.parametrize("raw,clean", [("CSIT205_DB426", "CSIT205"), ("PROJ085_21", "PROJ085"),
+                                       ("CSCI235", "CSCI235"), ("General", "General")])
+def test_clean_course(raw, clean):
+    assert moodle_ical.clean_course(raw) == clean
+
+
+def test_ignore_patterns_drop_other_sections():
+    items = moodle_ical.parse(SAMPLE_ICS, DUBAI, ignore=["QUIZ 1"])
+    assert {i.uid for i in items} == {"101@moodle.example", "104@moodle.example"}
+
+
 # --- offsets / dedupe ---
 
 def test_no_alert_before_first_threshold(conn):

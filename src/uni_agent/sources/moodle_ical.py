@@ -27,6 +27,15 @@ class FeedItem:
     due_at: datetime  # aware, UTC
 
 
+_COURSE_CODE = re.compile(r"[A-Z]{3,4}\d{3}")
+
+
+def clean_course(category: str) -> str:
+    """'CSIT205_DB426' -> 'CSIT205'; anything without a course code is kept as-is."""
+    m = _COURSE_CODE.match(category.strip())
+    return m.group(0) if m else category.strip()
+
+
 _SUFFIXES = re.compile(r"\s+(is due|closes|should be completed|due)\s*$", re.IGNORECASE)
 
 
@@ -53,8 +62,10 @@ def _to_utc(value, tz: ZoneInfo) -> datetime:
     raise ValueError(f"unsupported date value: {value!r}")
 
 
-def parse(ics: bytes | str, tz: ZoneInfo) -> list[FeedItem]:
+def parse(ics: bytes | str, tz: ZoneInfo, ignore: list[str] = ()) -> list[FeedItem]:
+    """`ignore`: case-insensitive substrings; matching events (e.g. other lab sections) are dropped."""
     cal = Calendar.from_ical(ics)
+    ignore_lc = [p.lower() for p in ignore]
     items: list[FeedItem] = []
     for ev in cal.walk("VEVENT"):
         summary = str(ev.get("SUMMARY", "")).strip()
@@ -64,12 +75,14 @@ def parse(ics: bytes | str, tz: ZoneInfo) -> list[FeedItem]:
             continue
         if summary.lower().endswith(" opens"):
             continue  # "Quiz 1 opens" is not a deadline
+        if any(p in summary.lower() for p in ignore_lc):
+            continue
         cats = ev.get("CATEGORIES")
         course = None
         if cats is not None:
             cat_list = cats if isinstance(cats, list) else [cats]
             names = [str(c) for cl in cat_list for c in getattr(cl, "cats", [cl])]
-            course = names[0] if names else None
+            course = clean_course(names[0]) if names else None
         items.append(
             FeedItem(
                 uid=uid,

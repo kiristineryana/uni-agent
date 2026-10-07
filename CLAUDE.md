@@ -18,7 +18,8 @@ Full spec: `UNI_AGENT_BUILD_SPEC.md`. Build proceeds phase by phase (section 7);
   Kind = `lectures/`/`labs/` subfolder if present, else filename heuristic, else ask via Telegram buttons.
 - Files matching `ignore_patterns` (student ID = own submissions) are skipped.
 - First run marks existing files as seen (no backfill summaries).
-- LLM default: Anthropic; timezone Asia/Dubai. Auto-start via Windows Task Scheduler.
+- LLM default: Gemini free tier (~20 requests/day on Flash), so send each document in ONE request where possible; Anthropic is switchable. Timezone Asia/Dubai.
+- Moodle course categories like `CSIT205_DB426` are trimmed to `CSIT205`; `deadline_ignore` drops other lab sections. Auto-start via Windows Task Scheduler.
 
 ## Hard rules
 Read-only toward Moodle; no Moodle password; chat-ID allowlist; Lab agent never writes graded answers/code.

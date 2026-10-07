@@ -55,7 +55,7 @@ class Orchestrator:
             return "Moodle feed not configured (MOODLE_ICAL_URL)."
         try:
             raw = await moodle_ical.fetch(url.get_secret_value())
-            items = moodle_ical.parse(raw, self.settings.tz)
+            items = moodle_ical.parse(raw, self.settings.tz, self.settings.deadline_ignore)
         except Exception as e:  # FeedError, or a parse error on a malformed feed
             msg = str(e) if isinstance(e, moodle_ical.FeedError) else f"could not parse feed ({type(e).__name__})"
             log.warning("iCal sync failed: %s", msg)
