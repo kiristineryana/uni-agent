@@ -7,6 +7,9 @@ Full spec: `UNI_AGENT_BUILD_SPEC.md`. Build proceeds phase by phase (section 7);
 - Windows, Python 3.13 in `.venv` (`py -3.13 -m venv .venv`, then `.venv\Scripts\pip install -e .[dev]`)
 - `.venv\Scripts\python -m uni_agent` runs the agent; `--check` validates setup and exits
 - `.venv\Scripts\python -m pytest`
+- Production: Task Scheduler task `UniAgent` runs `pythonw -m uni_agent` at logon (`scripts\install_autostart.ps1` /
+  `uninstall_autostart.ps1`). A lock file blocks a 2nd copy, so stop the task before running a dev copy:
+  `Stop-ScheduledTask UniAgent` then `Start-ScheduledTask UniAgent` to resume. Logs: `logs\uni_agent.log` (rotating).
 
 ## Layout
 - `config.yaml` = non-secret settings; `.env` = secrets (never log/commit)
