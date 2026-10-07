@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import sys
 from logging.handlers import RotatingFileHandler
 
-from . import db
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from telegram import Bot, Update
+from telegram.ext import Application
+
+from . import bot, db, notify
 from .config import Settings, load_settings
+from .orchestrator import Orchestrator
 
 log = logging.getLogger("uni_agent")
 
@@ -49,6 +55,7 @@ def check(settings: Settings) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="uni-agent")
     parser.add_argument("--check", action="store_true", help="validate setup and exit")
+    parser.add_argument("--test-alert", action="store_true", help="send one test message and exit")
     args = parser.parse_args(argv)
 
     settings = load_settings()
@@ -65,9 +72,52 @@ def main(argv: list[str] | None = None) -> int:
         conn.close()
         return 0
 
-    log.info("Nothing to run yet (Phase 0). Exiting cleanly.")
+    s = settings.secrets
+    if not (s.telegram_bot_token and s.telegram_chat_id):
+        log.error("Telegram is not configured; fill TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env")
+        return 1
+
+    if args.test_alert:
+        asyncio.run(_send_once(settings, "⏰ Test alert from Uni Agent. If you see this, alerts work."))
+        log.info("Test alert sent.")
+        return 0
+
+    run_bot(settings, conn)
     conn.close()
     return 0
+
+
+async def _send_once(settings: Settings, text: str) -> None:
+    tg_bot = Bot(settings.secrets.telegram_bot_token.get_secret_value())
+    async with tg_bot:
+        await notify.Notifier(tg_bot, settings.secrets.telegram_chat_id).send(text)
+
+
+def run_bot(settings: Settings, conn) -> None:
+    orch = Orchestrator(settings, conn)
+    scheduler = AsyncIOScheduler(timezone=settings.tz)
+
+    async def post_init(app: Application) -> None:
+        notify.configure(notify.Notifier(app.bot, settings.secrets.telegram_chat_id))
+        db.kv_set(conn, "started_at", db.iso(db.utcnow()))
+        scheduler.start()
+        log.info("Bot started; long polling.")
+        await notify.send_telegram("🟢 Uni Agent is online. /help for commands.")
+
+    async def post_shutdown(app: Application) -> None:
+        if scheduler.running:
+            scheduler.shutdown(wait=False)
+        log.info("Bot stopped.")
+
+    app = (
+        Application.builder()
+        .token(settings.secrets.telegram_bot_token.get_secret_value())
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
+    bot.register(app, orch, settings.secrets.telegram_chat_id)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
 if __name__ == "__main__":
