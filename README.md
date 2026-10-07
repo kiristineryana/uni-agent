@@ -20,6 +20,7 @@ Read-only toward Moodle. No Moodle password is stored. Only your Telegram accoun
 | `/lecture [course]` then a file | Lecture summary (e.g. `/lecture 205`) |
 | `/lab [course]` then a file | Lab briefing (e.g. `/lab 235`) |
 | *a file with no command* | Bot asks **Lecture or Lab?** with buttons |
+| 📷 *a photo or album* | Text is read with OCR, then summarised like a file. Caption e.g. `/lecture 235 Week 3 board` (type, course, title). An album = one document |
 | `/quiz lectures <topic or week>` | Theory quiz, e.g. `/quiz lectures normalization`, `/quiz lectures week 3` |
 | `/quiz labs <topic or week>` | Practical / viva quiz |
 | `/skip`, `/stop` | Skip a question (counts as wrong) / end the quiz |
@@ -29,6 +30,8 @@ Read-only toward Moodle. No Moodle password is stored. Only your Telegram accoun
 | `/fakedeadline <min>` | Test alert: fake item due in `<min>` minutes |
 
 You can also put the command in a file's caption, e.g. send a PDF captioned `/lab 235`.
+
+**Photos:** for best OCR, send the photo as a *File* (📎 → File) so Telegram doesn't compress it; keep the page flat, well lit and filling the frame. Printed text and slides work well; handwriting doesn't.
 
 ## How files get in
 

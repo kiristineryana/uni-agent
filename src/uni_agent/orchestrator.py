@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -14,7 +15,7 @@ from . import db, notify
 from .agents import deadlines, exam, ingest, lab, lecture, weekly
 from .config import Settings
 from .errors import ErrorReporter
-from .extract import extract_text, has_real_text, sha256_file
+from .extract import OCR_MARK, extract_text, has_real_text, sha256_file
 from .ocr import get_ocr
 from .llm import LLM, LLMError
 from .sources import folder_watch, moodle_ical
@@ -49,7 +50,8 @@ HELP_TEXT = """🎓 Uni Agent
 /fakedeadline <min> – test alert (fake item due in <min> minutes)
 /help – this message
 
-Send a file with no command and I'll ask whether it's a lecture or a lab."""
+Send a file with no command and I'll ask whether it's a lecture or a lab.
+📷 Photos work too (read with OCR); send several as an album for one summary."""
 
 
 def is_allowed(chat_id: int | None, allowed_chat_id: int | None) -> bool:
@@ -143,14 +145,37 @@ class Orchestrator:
             await self.process_document(path, kind, course, sha, from_upload=True)
 
     def course_from_arg(self, arg: str | None) -> str | None:
-        """'/lecture 205' or '/lecture CSIT205' -> 'CSIT205'."""
+        """'/lecture 205' or '/lecture CSIT205' -> 'CSIT205'. Anything not course-like -> None."""
         if not arg:
             return None
         arg = arg.strip().upper()
         for key, name in self.settings.course_names.items():
             if arg in (key.upper(), name.upper()):
                 return name
-        return arg
+        return arg if re.fullmatch(r"[A-Z]{3,4}\d{3}", arg) else None
+
+    async def process_photos(self, images: list[Path], kind: str | None, course: str | None,
+                             title: str | None = None) -> None:
+        """Photos (or an album) of slides/notes -> OCR -> one text document -> the normal upload flow."""
+        if self.ocr is None:
+            await notify.send_telegram("Photo support needs OCR, which is off or unavailable on this computer.")
+            return
+        n = len(images)
+        await notify.send_telegram("📷 Reading the photo…" if n == 1 else f"📷 Reading {n} photos as one document…")
+        texts = [await asyncio.to_thread(self.ocr, p.read_bytes()) for p in images]
+        body = "\n\n".join(f"## Photo {i}\n{OCR_MARK}\n{t.strip()}" for i, t in enumerate(texts, 1) if t.strip())
+        if not has_real_text(body):
+            what = "that photo" if len(images) == 1 else f"those {len(images)} photos"
+            await notify.send_telegram(
+                f"⚠️ I couldn't read enough text in {what}. Tips: good light, page flat and filling the frame, "
+                "or send it as a File (📎) for full resolution. Handwriting is hard for OCR.")
+            return
+        stamp = datetime.now(self.settings.tz).strftime("%Y-%m-%d %H%M")
+        name = re.sub(r'[<>:"/\\|?*]+', "", title or "").strip()[:80] or f"Photo notes {stamp}"
+        txt = images[0].parent / f"{name}.txt"
+        txt.write_text(body + "\n", encoding="utf-8")
+        log.info("OCR'd %d photo(s) into %s (%d chars)", len(images), txt.name, len(body))
+        await self.process_upload(txt, kind, course)
 
     def _lab_deadlines(self, course: str) -> list[str]:
         items = deadlines.upcoming(self.conn, db.utcnow(), timedelta(days=21))
