@@ -25,7 +25,10 @@ backfill_existing: false
 llm:
   provider: gemini             # anthropic | gemini
   anthropic_model: claude-sonnet-5-5
-  gemini_model: gemini-2.5-flash
+  gemini_models:               # tried in order; falls back when one is overloaded/rate-limited
+    - gemini-3.8-flash
+    - gemini-3.5-flash-lite
+  max_single_request_chars: 300000   # longer docs are chunked (costs more requests)
   daily_token_cap: 400000      # input + output tokens per day
 
 schedules:

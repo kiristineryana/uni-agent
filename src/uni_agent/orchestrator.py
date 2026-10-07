@@ -1,14 +1,18 @@
 """Routes commands and events to sub-agents. The only place that knows which agent does what."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import sqlite3
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from . import db, notify
-from .agents import deadlines, ingest
+from .agents import deadlines, ingest, lecture
 from .config import Settings
-from .sources import moodle_ical
+from .extract import extract_text, has_real_text, sha256_file
+from .llm import LLM, LLMError
+from .sources import folder_watch, moodle_ical
 
 log = logging.getLogger(__name__)
 
@@ -34,9 +38,104 @@ def is_allowed(chat_id: int | None, allowed_chat_id: int | None) -> bool:
 
 
 class Orchestrator:
-    def __init__(self, settings: Settings, conn: sqlite3.Connection):
+    def __init__(self, settings: Settings, conn: sqlite3.Connection, llm: LLM | None = None):
         self.settings = settings
         self.conn = conn
+        self.llm = llm
+        self._doc_lock = asyncio.Lock()  # one LLM job at a time (free-tier rate limits)
+        self._failed_notified: set[str] = set()
+
+    # --- documents -------------------------------------------------------
+
+    def baseline_folders(self) -> int:
+        """First sight of a course folder: record its existing files as seen (no summaries)."""
+        marked = 0
+        for folder in self.settings.course_folders:
+            key = f"baseline:{folder.resolve()}"
+            if self.settings.backfill_existing or db.kv_get(self.conn, key) or not folder.is_dir():
+                continue
+            for f in folder_watch.scan([folder], self.settings.ignore_patterns):
+                sha = sha256_file(f.path)
+                if not ingest.known_document(self.conn, sha):
+                    ingest.record_document(self.conn, f.path, sha, f.kind, self.settings.course_name(folder),
+                                           None, status="baseline")
+                    marked += 1
+            db.kv_set(self.conn, key, db.iso(db.utcnow()))
+        if marked:
+            log.info("Baseline: marked %d existing files as seen", marked)
+        return marked
+
+    async def scan_folders(self) -> None:
+        """Catch anything the watcher missed (e.g. files added while the app was off)."""
+        found = await asyncio.to_thread(folder_watch.scan, self.settings.course_folders, self.settings.ignore_patterns)
+        for f in found:
+            await self.on_new_file(f)
+
+    async def on_new_file(self, f: folder_watch.FoundFile) -> None:
+        """Route a file from a watched folder to the agent for its kind."""
+        sha = await asyncio.to_thread(sha256_file, f.path)
+        if ingest.known_document(self.conn, sha):
+            return
+        course = self.settings.course_name(f.course_folder)
+        if f.kind == "lecture":
+            await self.process_document(f.path, "lecture", course, sha)
+        else:
+            # Lab agent and the "Lecture or Lab?" question arrive in Phase 3b.
+            log.info("Skipping %s for now (kind=%s; handled from Phase 3b)", f.path.name, f.kind)
+
+    async def process_upload(self, path: Path, kind: str) -> None:
+        sha = await asyncio.to_thread(sha256_file, path)
+        row = ingest.known_document(self.conn, sha)
+        if row and row["summary_path"] and row["kind"] == kind and Path(row["summary_path"]).exists():
+            await notify.send_telegram("Already summarised; here it is again:\n\n"
+                                       + Path(row["summary_path"]).read_text(encoding="utf-8"))
+            return
+        course = ingest.guess_course(path.name, self.settings.course_names) or "Uploads"
+        await self.process_document(path, kind, course, sha, from_upload=True)
+
+    async def process_document(self, path: Path, kind: str, course: str, sha: str,
+                               from_upload: bool = False) -> None:
+        if kind != "lecture":
+            await notify.send_telegram("The Lab agent arrives in Phase 3b.")
+            return
+        if self.llm is None:
+            await notify.send_telegram(f"Can't summarise {path.name}: LLM_API_KEY is not set.")
+            return
+        title = ingest.title_from_path(path)
+        async with self._doc_lock:
+            if not from_upload and ingest.known_document(self.conn, sha):
+                return  # the watcher and the periodic scan both saw it; the first one handled it
+            try:
+                text = await asyncio.to_thread(extract_text, path)
+                if not has_real_text(text):
+                    await notify.send_telegram(
+                        f"⚠️ {path.name}: no readable text (scanned PDF or image-only slides?). Skipped.")
+                    ingest.record_document(self.conn, path, sha, kind, course, None, status="no_text")
+                    return
+                if not from_upload:
+                    await notify.send_telegram(f"📥 New lecture found: {title} ({course}). Summarising…")
+                earlier = ingest.earlier_titles(self.conn, kind, course)
+                summary = await asyncio.to_thread(
+                    lecture.summarize, self.llm, text, title, course, earlier,
+                    self.settings.llm.max_single_request_chars)
+            except LLMError as e:
+                log.warning("Summary failed for %s: %s", path.name, e)
+                if sha not in self._failed_notified:
+                    self._failed_notified.add(sha)
+                    retry = "Send it again later." if from_upload else "I'll retry on the next scan."
+                    await notify.send_telegram(f"⚠️ Couldn't summarise {path.name}: {e} {retry}")
+                return
+            except Exception as e:
+                log.exception("Processing failed for %s", path.name)
+                await notify.send_telegram(f"⚠️ Couldn't read {path.name} ({type(e).__name__}). Skipped.")
+                ingest.record_document(self.conn, path, sha, kind, course, None, status="error")
+                return
+
+            out = ingest.summary_file(self.settings.data_dir, kind, course, path, sha)
+            out.write_text(summary + f"\n\n---\nSource: {path}\n", encoding="utf-8")
+            ingest.record_document(self.conn, path, sha, kind, course, out)
+            self._failed_notified.discard(sha)
+        await notify.send_telegram(summary)
 
     def help(self) -> str:
         return HELP_TEXT
@@ -48,6 +147,10 @@ class Orchestrator:
         days = self.settings.deadlines_window_days
         items = deadlines.upcoming(self.conn, now, timedelta(days=days))
         return deadlines.deadlines_text(items, now, self.settings.tz, days)
+
+    async def run_ingest(self) -> None:
+        await self.run_ical_sync()
+        await self.scan_folders()
 
     async def run_ical_sync(self) -> str:
         url = self.settings.secrets.moodle_ical_url
@@ -109,5 +212,5 @@ class Orchestrator:
             f"Docs summarised: {doc_counts.get('lecture', 0)} lectures, {doc_counts.get('lab', 0)} labs\n"
             f"Next deadline: {next_item}\n"
             f"LLM today: {used:,} / {self.settings.llm.daily_token_cap:,} tokens "
-            f"({self.settings.llm.provider})"
+            f"({self.settings.llm.provider}{'' if self.llm else ', no API key'})"
         )

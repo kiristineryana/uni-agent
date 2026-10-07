@@ -1,8 +1,10 @@
-"""Ingest agent: pulls deadlines from Moodle into `items`. (Folder ingest arrives in Phase 3a.)"""
+"""Ingest agent: Moodle deadlines into `items`; documents (hash/dedupe/record) into `documents`."""
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 
 from .. import db
 from ..sources.moodle_ical import FeedItem
@@ -31,6 +33,51 @@ def upsert_items(conn: sqlite3.Connection, items: list[FeedItem], source: str = 
                     conn.execute("DELETE FROM alerts_sent WHERE item_id = ?", (row["id"],))
                 updated += 1
     return added, updated
+
+
+def known_document(conn: sqlite3.Connection, sha: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM documents WHERE sha256 = ?", (sha,)).fetchone()
+
+
+def record_document(conn: sqlite3.Connection, path: Path, sha: str, kind: str | None, course: str | None,
+                    summary_path: Path | None, status: str = "done") -> int:
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO documents(path, sha256, kind, course, ingested_at, summary_path, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(sha256) DO UPDATE SET "
+            "kind = excluded.kind, course = excluded.course, summary_path = excluded.summary_path, "
+            "status = excluded.status, path = excluded.path, ingested_at = excluded.ingested_at",
+            (str(path), sha, kind, course, db.iso(db.utcnow()), str(summary_path) if summary_path else None, status),
+        )
+    return cur.lastrowid
+
+
+def earlier_titles(conn: sqlite3.Connection, kind: str, course: str) -> list[str]:
+    rows = conn.execute(
+        "SELECT path FROM documents WHERE kind = ? AND course = ? AND summary_path IS NOT NULL ORDER BY ingested_at",
+        (kind, course),
+    ).fetchall()
+    return [title_from_path(Path(r["path"])) for r in rows]
+
+
+def title_from_path(path: Path) -> str:
+    return re.sub(r"[_\s]+", " ", path.stem).strip()
+
+
+def summary_file(data_dir: Path, kind: str, course: str, source: Path, sha: str) -> Path:
+    folder = data_dir / "summaries" / ("lectures" if kind == "lecture" else "labs") / re.sub(r"[^\w.-]+", "_", course)
+    folder.mkdir(parents=True, exist_ok=True)
+    out = folder / f"{source.stem}.md"
+    return out if not out.exists() else folder / f"{source.stem}-{sha[:8]}.md"
+
+
+def guess_course(filename: str, course_names: dict[str, str]) -> str | None:
+    """Match an uploaded file to a course by code ('CSIT205') or folder key ('205') in its name."""
+    upper = filename.upper()
+    for key, name in course_names.items():
+        if name.upper() in upper or re.search(rf"(?<!\d){re.escape(key)}(?!\d)", upper):
+            return name
+    return None
 
 
 def add_manual_item(conn: sqlite3.Connection, title: str, course: str | None, due_at: datetime,

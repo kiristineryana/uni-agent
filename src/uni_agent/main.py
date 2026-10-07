@@ -14,7 +14,9 @@ from telegram.ext import Application
 
 from . import bot, db, notify
 from .config import Settings, load_settings
+from .llm import make_llm
 from .orchestrator import Orchestrator
+from .sources.folder_watch import FolderWatcher
 
 log = logging.getLogger("uni_agent")
 
@@ -95,17 +97,20 @@ async def _send_once(settings: Settings, text: str) -> None:
 
 
 def run_bot(settings: Settings, conn) -> None:
-    orch = Orchestrator(settings, conn)
+    orch = Orchestrator(settings, conn, make_llm(settings, conn))
     scheduler = AsyncIOScheduler(timezone=settings.tz)
+    watcher = FolderWatcher(settings.course_folders, settings.ignore_patterns, orch.on_new_file)
 
     async def post_init(app: Application) -> None:
         notify.configure(notify.Notifier(app.bot, settings.secrets.telegram_chat_id))
         db.kv_set(conn, "started_at", db.iso(db.utcnow()))
+        await asyncio.to_thread(orch.baseline_folders)
+        watcher.start()
         sch = settings.schedules
         now = datetime.now(settings.tz)
-        # Sync first, then check alerts shortly after, so a fresh feed is alerted on at startup.
-        scheduler.add_job(orch.run_ical_sync, "interval", minutes=sch.ingest_every_minutes,
-                          next_run_time=now, id="ical_sync", max_instances=1, coalesce=True)
+        # Ingest (Moodle + folder rescan) first, then check alerts shortly after.
+        scheduler.add_job(orch.run_ingest, "interval", minutes=sch.ingest_every_minutes,
+                          next_run_time=now, id="ingest", max_instances=1, coalesce=True)
         scheduler.add_job(orch.run_deadline_check, "interval", minutes=sch.deadline_check_every_minutes,
                           next_run_time=now + timedelta(seconds=30), id="deadline_check",
                           max_instances=1, coalesce=True)
@@ -114,6 +119,7 @@ def run_bot(settings: Settings, conn) -> None:
         await notify.send_telegram("🟢 Uni Agent is online. /help for commands.")
 
     async def post_shutdown(app: Application) -> None:
+        watcher.stop()
         if scheduler.running:
             scheduler.shutdown(wait=False)
         log.info("Bot stopped.")
