@@ -134,7 +134,9 @@ def matching_docs(conn: sqlite3.Connection, kind: str, topic: str | None) -> lis
     out = []
     for r in rows:
         haystack = _norm(f"{r['course']} {Path(r['path']).stem}")
-        if t in haystack:
+        topics = [q["topic"] or "" for q in conn.execute(
+            "SELECT DISTINCT topic FROM quiz_questions WHERE doc_id = ?", (r["id"],))]
+        if t in haystack or any(t in _norm(x) for x in topics):  # weekly review suggests topic labels
             out.append(r)
             continue
         try:

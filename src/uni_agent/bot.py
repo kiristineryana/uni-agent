@@ -111,6 +111,10 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
         await update.message.chat.send_action(ChatAction.TYPING)
         await update.message.reply_text(await orch.quiz_start(kinds[args[0].lower()], topic))
 
+    async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if await guard(update):
+            await update.message.reply_text(orch.weekly_review())
+
     async def skip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await guard(update):
             await update.message.reply_text(orch.quiz_skip() or "No quiz running.")
@@ -161,6 +165,7 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
     app.add_handler(CallbackQueryHandler(kind_button, pattern=r"^kind:"))
     app.add_handler(CommandHandler("quiz", quiz_cmd))
     app.add_handler(CommandHandler("skip", skip_cmd))
+    app.add_handler(CommandHandler("week", week_cmd))
     app.add_handler(CommandHandler("stop", stop_cmd))
     app.add_handler(MessageHandler(filters.Document.ALL, document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_msg))

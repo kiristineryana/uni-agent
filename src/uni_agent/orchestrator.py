@@ -11,7 +11,7 @@ from pathlib import Path
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from . import db, notify
-from .agents import deadlines, exam, ingest, lab, lecture
+from .agents import deadlines, exam, ingest, lab, lecture, weekly
 from .config import Settings
 from .extract import extract_text, has_real_text, sha256_file
 from .llm import LLM, LLMError
@@ -288,6 +288,14 @@ class Orchestrator:
         if self.quiz is None:
             return "No quiz running."
         return self._finish_quiz()  # an unanswered current question isn't counted
+
+    # --- weekly review ---------------------------------------------------
+
+    def weekly_review(self) -> str:
+        return weekly.build_review(self.conn, db.utcnow(), self.settings.tz)
+
+    async def run_weekly_review(self) -> None:
+        await notify.send_telegram(self.weekly_review())
 
     def help(self) -> str:
         return HELP_TEXT

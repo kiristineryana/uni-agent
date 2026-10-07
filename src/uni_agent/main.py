@@ -114,6 +114,9 @@ def run_bot(settings: Settings, conn) -> None:
         scheduler.add_job(orch.run_deadline_check, "interval", minutes=sch.deadline_check_every_minutes,
                           next_run_time=now + timedelta(seconds=30), id="deadline_check",
                           max_instances=1, coalesce=True)
+        wr = sch.weekly_review
+        scheduler.add_job(orch.run_weekly_review, "cron", day_of_week=wr.day_of_week, hour=wr.hour,
+                          minute=wr.minute, id="weekly_review", misfire_grace_time=6 * 3600, coalesce=True)
         scheduler.start()
         log.info("Bot started; long polling.")
         await notify.send_telegram("🟢 Uni Agent is online. /help for commands.")
