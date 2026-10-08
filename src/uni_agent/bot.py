@@ -235,6 +235,7 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
         args = context.args or []
         kinds = {"lectures": "lecture", "lecture": "lecture", "labs": "lab", "lab": "lab"}
         if not args or args[0].lower() not in kinds:
+            log.info("Quiz start: usage shown (missing 'lectures' or 'labs')")
             await update.message.reply_text("Usage: /quiz lectures <topic or week>  or  /quiz labs <topic or week>\n"
                                             "e.g. /quiz lectures normalization, /quiz labs week 3, /quiz lectures 205")
             return

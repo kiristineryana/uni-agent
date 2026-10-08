@@ -305,6 +305,7 @@ class Orchestrator:
             hint = ("\nI have: " + ", ".join(sorted({f"{d['course']}: {ingest.title_from_path(Path(d['path']))}"
                                                      for d in have}))) if have else \
                 f"\nNo {label} summaries yet. Send one with /{label} first."
+            log.info("Quiz start: %s '%s' -> no matching summaries", kind, topic)
             return f"No {label} summaries match '{topic}'.{hint}"
         try:
             async with self._doc_lock:
@@ -323,6 +324,7 @@ class Orchestrator:
         if not ids:
             return "⚠️ No questions available yet. Try again later."
         self.quiz = QuizSession(kind, ids)
+        log.info("Quiz start: %s '%s' -> %d questions from %d docs", kind, topic or "", len(ids), len(docs))
         style = "theory" if kind == "lecture" else "practical / viva"
         scope = f" on '{topic}'" if topic else ""
         return (f"🎯 {style.capitalize()} quiz{scope}: {len(ids)} questions from {len(docs)} "
