@@ -3,6 +3,7 @@ timezone: Asia/Dubai
 # Each folder is one course; the folder name becomes the course name.
 # Files are tagged lecture/lab by filename; a "lectures" or "labs" subfolder inside a
 # course folder forces the kind. If unsure, the bot asks "Lecture or Lab?" on Telegram.
+# Put your real folders in config.local.yaml (gitignored); it overrides these examples.
 course_folders:
   - C:/Users/YOU/Desktop/UOWD/205
   - C:/Users/YOU/Desktop/UOWD/214
@@ -15,8 +16,9 @@ course_names:
   "235": CSCI235
 
 # Files matching any of these globs are never processed (e.g. your own submissions).
+# Put your student ID pattern in config.local.yaml, e.g. "*1234567*".
 ignore_patterns:
-  - "*1234567*"
+  - "*STUDENT_ID*"
   - "~$*"
 
 # Moodle file sync (only if MOODLE_TOKEN is set in .env). Read-only: lecture/lab files from your courses are

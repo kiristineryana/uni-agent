@@ -81,10 +81,22 @@ def _env(name: str) -> str | None:
     return value or None
 
 
+def _merge(base: dict, override: dict) -> dict:
+    """Nested dicts merge; anything else (lists, values) in `override` replaces `base`."""
+    out = dict(base)
+    for k, v in override.items():
+        out[k] = _merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
 def load_settings(config_path: Path | None = None, env_path: Path | None = None) -> Settings:
+    """config.yaml (shared defaults) + config.local.yaml (personal, gitignored: your folders, student ID...)."""
     config_path = config_path or PROJECT_ROOT / "config.yaml"
     load_dotenv(env_path or PROJECT_ROOT / ".env")
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+    local_path = config_path.with_name("config.local.yaml")
+    if local_path.exists():
+        raw = _merge(raw or {}, yaml.safe_load(local_path.read_text(encoding="utf-8")) or {})
     chat_id = _env("TELEGRAM_CHAT_ID")
     raw["secrets"] = Secrets(
         telegram_bot_token=_env("TELEGRAM_BOT_TOKEN"),

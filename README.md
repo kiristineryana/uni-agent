@@ -66,7 +66,7 @@ Identical files are only ever processed once.
    - `LLM_API_KEY`: Gemini key from aistudio.google.com/apikey (or an Anthropic key, see below)
    - `MOODLE_ICAL_URL`: Moodle → Calendar → *Import or export calendars* → *Export calendar* → All courses,
      Recent and next 60 days → *Get calendar URL*
-3. **Settings**: edit `config.yaml` (course folders, course names, provider, alert offsets, daily token cap).
+3. **Settings**: shared defaults are in `config.yaml`. Put personal values in `config.local.yaml` (gitignored; it overrides `config.yaml`), e.g. your real `course_folders` and an `ignore_patterns` entry with your student ID such as `"*1234567*"` so your own submissions are never processed.
 4. **Check**: `.venv\Scripts\python -m uni_agent --check` then `.venv\Scripts\python -m uni_agent --test-alert`.
 5. **Auto-start at login**: `powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1`
    then `Start-ScheduledTask -TaskName UniAgent`. Remove with `scripts\uninstall_autostart.ps1`.

@@ -12,7 +12,7 @@ Full spec: `UNI_AGENT_BUILD_SPEC.md`. Build proceeds phase by phase (section 7);
   `Stop-ScheduledTask UniAgent` then `Start-ScheduledTask UniAgent` to resume. Logs: `logs\uni_agent.log` (rotating).
 
 ## Layout
-- `config.yaml` = non-secret settings; `.env` = secrets (never log/commit)
+- `config.yaml` = shared non-secret settings; `config.local.yaml` (gitignored) = personal overrides (real folder paths, student-ID ignore pattern); `.env` = secrets (never log/commit). Repo is public: keep personal data out.
 - `src/uni_agent/` — `orchestrator.py` routes; `agents/*` are pure (own SYSTEM_PROMPT constant, no Telegram); only `orchestrator` + `notify` send messages
 - `data/` (gitignored) — `uni.db`, `summaries/lectures|labs/`
 

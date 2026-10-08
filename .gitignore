@@ -1,5 +1,6 @@
-# secrets
+# secrets and personal settings
 .env
+config.local.yaml
 
 # runtime state
 data/
@@ -12,3 +13,6 @@ __pycache__/
 *.pyc
 *.egg-info/
 .pytest_cache/
+
+# Office lock files
+~$*
