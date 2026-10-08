@@ -12,6 +12,7 @@ from telegram.constants import ChatAction
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, TypeHandler, filters
 
 from .extract import SUPPORTED
+from .notify import split_message
 from .orchestrator import Orchestrator, is_allowed
 
 log = logging.getLogger(__name__)
@@ -242,6 +243,13 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
         await update.message.chat.send_action(ChatAction.TYPING)
         await update.message.reply_text(await orch.quiz_start(kinds[args[0].lower()], topic))
 
+    async def files_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if await guard(update):
+            # Not in a thread: it shares the DB connection. Hashes are cached, so repeat calls are quick.
+            text = orch.files(" ".join(context.args) if context.args else None)
+            for part in split_message(text):
+                await update.message.reply_text(part)
+
     async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await guard(update):
             await update.message.reply_text(orch.weekly_review())
@@ -298,6 +306,7 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
     app.add_handler(CommandHandler("quiz", quiz_cmd))
     app.add_handler(CommandHandler("skip", skip_cmd))
     app.add_handler(CommandHandler("week", week_cmd))
+    app.add_handler(CommandHandler("files", files_cmd))
     app.add_handler(CommandHandler("stop", stop_cmd))
     app.add_handler(MessageHandler(filters.Document.ALL, document))
     app.add_handler(MessageHandler(filters.PHOTO, photo))

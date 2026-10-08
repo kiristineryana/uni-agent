@@ -12,7 +12,7 @@ from pathlib import Path
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from . import db, notify
-from .agents import deadlines, exam, ingest, lab, lecture, moodle_sync, weekly
+from .agents import deadlines, exam, files_index, ingest, lab, lecture, moodle_sync, weekly
 from .config import Settings
 from .errors import ErrorReporter
 from .extract import OCR_MARK, VOICE_MARK, extract_text, has_real_text, sha256_file
@@ -46,6 +46,7 @@ HELP_TEXT = """🎓 Uni Agent
 /skip – skip a quiz question
 /stop – end a quiz
 /week – weekly review now
+/files [course] – live list of your course folders' files and their status
 /status – sync time, docs, next alerts, LLM usage
 /sync – pull Moodle deadlines (and files, if set up) now
 /fakedeadline <min> – test alert (fake item due in <min> minutes)
@@ -370,6 +371,12 @@ class Orchestrator:
         if self.quiz is None:
             return "No quiz running."
         return self._finish_quiz()  # an unanswered current question isn't counted
+
+    # --- live file record ------------------------------------------------
+
+    def files(self, arg: str | None = None) -> str:
+        course = self.course_from_arg(arg) or (arg.strip() if arg else None)
+        return files_index.files_text(self.conn, self.settings, self.settings.tz, course)
 
     # --- weekly review ---------------------------------------------------
 

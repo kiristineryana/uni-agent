@@ -25,6 +25,7 @@ Read-only toward Moodle. No Moodle password is stored. Only your Telegram accoun
 | `/quiz lectures <topic or week>` | Theory quiz, e.g. `/quiz lectures normalization`, `/quiz lectures week 3` |
 | `/quiz labs <topic or week>` | Practical / viva quiz |
 | `/skip`, `/stop` | Skip a question (counts as wrong) / end the quiz |
+| `/files [course]` | Live list of the files in your course folders (read from disk each time) with their status: summarised, waiting for Lecture/Lab, here before the bot, ignored... e.g. `/files 235` |
 | `/week` | Weekly review now |
 | `/status` | Last Moodle sync, docs summarised, next deadline, LLM usage today, last problem |
 | `/sync` | Pull Moodle deadlines now |
@@ -44,7 +45,7 @@ The agent watches the course folders in `config.yaml` (`course_folders`). Drop a
 2. the filename does (`lab`, `tutorial`, `practice`… → lab; `lecture`, `L01`, `slides`… → lecture), otherwise
 3. the bot asks you on Telegram.
 
-**Moodle file sync (optional):** with `MOODLE_TOKEN` in `.env`, lecture/lab files from your Moodle courses are downloaded every hour into `<course folder>\Moodle\` (sorted into `lectures\`/`labs\` when the name makes it clear). Read-only: only three read functions can be called. The first sync only makes local copies (no summaries); later new or updated files are summarised like any new file. Files you already have are not duplicated. Courses without a matching course folder are skipped.
+**Moodle file sync (optional, not available at UOW: no web-service key):** with `MOODLE_TOKEN` in `.env`, lecture/lab files from your Moodle courses are downloaded every hour into `<course folder>\Moodle\` (sorted into `lectures\`/`labs\` when the name makes it clear). Read-only: only three read functions can be called. The first sync only makes local copies (no summaries); later new or updated files are summarised like any new file. Files you already have are not duplicated. Courses without a matching course folder are skipped.
 
 Files matching `ignore_patterns` (e.g. your own submissions with your student ID) are never processed.
 Files that were already in the folders on first run are marked as seen and not summarised; send any of them with `/lecture` or `/lab` to summarise it.
