@@ -246,9 +246,24 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
     async def files_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await guard(update):
             # Not in a thread: it shares the DB connection. Hashes are cached, so repeat calls are quick.
-            text = orch.files(" ".join(context.args) if context.args else None)
-            for part in split_message(text):
-                await update.message.reply_text(part)
+            text, buttons = orch.files(" ".join(context.args) if context.args else None)
+            parts = split_message(text)
+            for i, part in enumerate(parts):  # buttons go on the last part
+                await update.message.reply_text(part, reply_markup=buttons if i == len(parts) - 1 else None)
+
+    async def summarise_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        await query.answer()
+        if not await guard(update):
+            return
+        action, _, arg = query.data.partition(":")
+        if action == "sum" and arg.isdigit():
+            text = await orch.summarise_existing(int(arg))
+        elif action == "sumall":
+            text = await orch.summarise_all(arg)
+        else:
+            return
+        await query.message.reply_text(text)
 
     async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await guard(update):
@@ -307,6 +322,7 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
     app.add_handler(CommandHandler("skip", skip_cmd))
     app.add_handler(CommandHandler("week", week_cmd))
     app.add_handler(CommandHandler("files", files_cmd))
+    app.add_handler(CallbackQueryHandler(summarise_button, pattern=r"^sum(all)?:"))
     app.add_handler(CommandHandler("stop", stop_cmd))
     app.add_handler(MessageHandler(filters.Document.ALL, document))
     app.add_handler(MessageHandler(filters.PHOTO, photo))

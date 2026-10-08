@@ -25,7 +25,7 @@ Read-only toward Moodle. No Moodle password is stored. Only your Telegram accoun
 | `/quiz lectures <topic or week>` | Theory quiz, e.g. `/quiz lectures normalization`, `/quiz lectures week 3` |
 | `/quiz labs <topic or week>` | Practical / viva quiz |
 | `/skip`, `/stop` | Skip a question (counts as wrong) / end the quiz |
-| `/files [course]` | Live list of the files in your course folders (read from disk each time) with their status: summarised, waiting for Lecture/Lab, here before the bot, ignored... e.g. `/files 235` |
+| `/files [course]` | Live list of the files in your course folders (read from disk each time) with their status: summarised, waiting for Lecture/Lab, here before the bot, ignored... e.g. `/files 235`. Files with no summary yet get **buttons** to summarise them (one, or all) |
 | `/week` | Weekly review now |
 | `/status` | Last Moodle sync, docs summarised, next deadline, LLM usage today, last problem |
 | `/sync` | Pull Moodle deadlines now |

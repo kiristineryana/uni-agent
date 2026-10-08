@@ -18,6 +18,7 @@ STATUS = {
     "baseline": "📦 here before the bot",
     "pending_kind": "❓ waiting: Lecture or Lab?",
     "queued": "⏳ being summarised",
+    "queued_existing": "⏳ being summarised",
     "no_text": "⚠️ no readable text",
     "error": "⚠️ couldn't be read",
 }
@@ -84,6 +85,28 @@ def _course_block(settings: Settings, folder: Path, entries: list[FileEntry], tz
     if not entries:
         lines.append("(empty)")
     return "\n".join(lines)
+
+
+SUMMARISABLE = ("baseline", "no_text", "error")  # on disk, known, but no summary yet
+
+
+def summarisable(conn: sqlite3.Connection, settings: Settings, course: str | None = None) -> list[sqlite3.Row]:
+    """Docs that can be summarised on request: still on disk (at their recorded path) and never summarised."""
+    rows = conn.execute(
+        f"SELECT * FROM documents WHERE status IN ({','.join('?' * len(SUMMARISABLE))}) ORDER BY ingested_at DESC",
+        SUMMARISABLE).fetchall()
+    folders = {str(f.resolve()).lower() for f in settings.course_folders}
+    out = []
+    for r in rows:
+        p = Path(r["path"])
+        if not p.exists() or not any(str(p.resolve()).lower().startswith(f) for f in folders):
+            continue  # moved/deleted, or an upload rather than a course-folder file
+        if any(fnmatch.fnmatch(p.name.lower(), pat.lower()) for pat in settings.ignore_patterns):
+            continue
+        if course and (r["course"] or "").upper() != course.upper():
+            continue
+        out.append(r)
+    return out
 
 
 def files_text(conn: sqlite3.Connection, settings: Settings, tz: ZoneInfo, course: str | None = None) -> str:

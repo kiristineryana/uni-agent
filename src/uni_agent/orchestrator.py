@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 
 AGENTS = {"lecture": lecture, "lab": lab}
 ICAL_FAILURES_BEFORE_ALERT = 3
+MAX_SUMMARISE_BUTTONS = 10
 
 
 @dataclass
@@ -72,6 +73,9 @@ class Orchestrator:
         self.errors = ErrorReporter(conn)
         self._ical_failures = 0
         self._moodle_ws_refused: str | None = None
+        with conn:  # work queued before a restart/crash never finished: make it available again
+            conn.execute("UPDATE documents SET status = 'baseline' WHERE status = 'queued_existing'")
+            conn.execute("UPDATE documents SET status = 'pending_kind' WHERE status = 'queued'")
         self.ocr = get_ocr() if settings.ocr_enabled else None
         self.transcriber = (make_transcriber(settings.voice_model, settings.data_dir / "models",
                                              settings.voice_language) if settings.voice_enabled else None)
@@ -244,7 +248,7 @@ class Orchestrator:
         label = "lecture" if kind == "lecture" else "lab sheet"
         async with self._doc_lock:
             row = ingest.known_document(self.conn, sha)
-            if not from_upload and row and row["status"] not in ("pending_kind", "queued"):
+            if not from_upload and row and row["status"] not in ("pending_kind", "queued", "queued_existing"):
                 return  # the watcher and the periodic scan both saw it; the first one handled it
             try:
                 text = await asyncio.to_thread(extract_text, path, self.ocr)
@@ -267,8 +271,10 @@ class Orchestrator:
             except LLMError as e:
                 log.warning("Summary failed for %s: %s", path.name, e)
                 with self.conn:  # re-arm the Lecture/Lab buttons
-                    self.conn.execute("UPDATE documents SET status = 'pending_kind' "
-                                      "WHERE sha256 = ? AND status = 'queued'", (sha,))
+                    self.conn.execute(  # /files requests go back to "no summary yet", so the button returns
+                        "UPDATE documents SET status = CASE status WHEN 'queued_existing' THEN 'baseline' "
+                        "ELSE 'pending_kind' END WHERE sha256 = ? AND status IN ('queued', 'queued_existing')",
+                        (sha,))
                 if sha not in self._failed_notified:
                     self._failed_notified.add(sha)
                     retry = ("Press the button again or resend it later." if from_upload
@@ -374,9 +380,51 @@ class Orchestrator:
 
     # --- live file record ------------------------------------------------
 
-    def files(self, arg: str | None = None) -> str:
+    def files(self, arg: str | None = None) -> tuple[str, InlineKeyboardMarkup | None]:
+        """The live file list, plus buttons to summarise files that have no summary yet."""
         course = self.course_from_arg(arg) or (arg.strip() if arg else None)
-        return files_index.files_text(self.conn, self.settings, self.settings.tz, course)
+        text = files_index.files_text(self.conn, self.settings, self.settings.tz, course)
+        docs = files_index.summarisable(self.conn, self.settings, course)
+        if not docs:
+            return text, None
+        shown = docs[:MAX_SUMMARISE_BUTTONS]
+        rows = [[InlineKeyboardButton(
+            f"{files_index.KIND_ICON.get(d['kind'], '📄')} {d['course']}: {Path(d['path']).name}"[:60],
+            callback_data=f"sum:{d['id']}")] for d in shown]
+        rows.append([InlineKeyboardButton(f"Summarise all {len(docs)}", callback_data=f"sumall:{course or '*'}")])
+        more = (f" Showing {len(shown)} buttons; use /files <course> for the rest."
+                if len(docs) > len(shown) else "")
+        text += (f"\n\n📝 {len(docs)} file(s) have no summary yet. Tap one to summarise it "
+                 f"(each uses 1 Gemini request, about 20/day on the free tier).{more}")
+        return text, InlineKeyboardMarkup(rows)
+
+    async def summarise_existing(self, doc_id: int) -> str:
+        """A /files button: send a not-yet-summarised course file to its agent (or ask Lecture or Lab)."""
+        row = self.conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
+        if row is None or row["status"] not in files_index.SUMMARISABLE:
+            return "Already handled."
+        path = Path(row["path"])
+        if not path.exists():
+            return f"{path.name} isn't there any more."
+        kind = row["kind"] or folder_watch.guess_kind(
+            path, folder_watch.course_folder_for(path, self.settings.course_folders) or path.parent)
+        if kind is None:
+            await self.ask_kind(path, row["course"], row["sha256"])
+            return f"{path.name}: asking whether it's a lecture or a lab…"
+        with self.conn:  # pressing again now says "Already handled"
+            self.conn.execute("UPDATE documents SET status = 'queued_existing' WHERE id = ?", (doc_id,))
+        asyncio.create_task(self.process_document(path, kind, row["course"], row["sha256"], from_upload=True))
+        return f"{path.name} → {'📘 Lecture' if kind == 'lecture' else '🧪 Lab'} agent. Working on it…"
+
+    async def summarise_all(self, course: str | None) -> str:
+        docs = files_index.summarisable(self.conn, self.settings, None if course in (None, "*") else course)
+        if not docs:
+            return "Nothing left to summarise."
+        replies = [await self.summarise_existing(d["id"]) for d in docs]
+        queued = sum("Working on it" in r for r in replies)
+        asked = sum("asking" in r for r in replies)
+        return (f"Queued {queued} file(s); they're summarised one at a time and arrive as they finish."
+                + (f" {asked} need a Lecture/Lab answer first." if asked else ""))
 
     # --- weekly review ---------------------------------------------------
 
