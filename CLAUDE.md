@@ -23,7 +23,7 @@ Full spec: `UNI_AGENT_BUILD_SPEC.md`. Build proceeds phase by phase (section 7);
 - Voice: faster-whisper `base.en` (`transcribe.py`); audio decoded with PyAV 19 ourselves because faster-whisper's decoder passes a removed PyAV option. During a quiz a voice note = answer.
 - Files matching `ignore_patterns` (student ID = own submissions) are skipped.
 - First run marks existing files as seen (no backfill summaries).
-- LLM default: Gemini free tier (~20 requests/day on Flash), so send each document in ONE request where possible; Anthropic is switchable. Timezone Asia/Dubai.
+- LLM default: Gemini free tier, Flash-Lite first then 3.8 Flash (Flash is usually 503-overloaded), so send each document in ONE request where possible; Anthropic is switchable. Timezone Asia/Dubai.
 - Moodle course categories like `CSIT205_DB426` are trimmed to `CSIT205`; `deadline_ignore` drops other lab sections. Auto-start via Windows Task Scheduler.
 
 ## Hard rules

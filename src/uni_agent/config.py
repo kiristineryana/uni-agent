@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 class LLMConfig(BaseModel):
     provider: str = "anthropic"
     anthropic_model: str = "claude-sonnet-5-5"
-    gemini_models: list[str] = Field(default_factory=lambda: ["gemini-3.8-flash", "gemini-3.5-flash-lite"])
+    gemini_models: list[str] = Field(default_factory=lambda: ["gemini-3.5-flash-lite", "gemini-3.8-flash"])
     daily_token_cap: int = 400_000
     max_single_request_chars: int = 300_000
 
