@@ -1,5 +1,7 @@
 """Voice notes: decoding, transcript -> document, and voice answers in quizzes."""
 import json
+import subprocess
+import sys
 import math
 import struct
 import wave
@@ -126,3 +128,27 @@ async def test_voice_answer_with_no_speech_keeps_the_question(tmp_path):
     o = Orchestrator(Settings(data_dir=tmp_path, voice_enabled=False), db.connect(":memory:"))
     o.transcriber = lambda p: ""
     assert "couldn't hear any speech" in await o.quiz_voice_answer(tmp_path / "v.ogg")
+
+
+MODEL_DIR = Path(__file__).resolve().parents[1] / "data" / "models"
+
+
+@pytest.mark.skipif(sys.platform != "win32" or not any(MODEL_DIR.glob("models--*base.en*")),
+                    reason="needs Windows and the downloaded speech model")
+def test_ocr_then_voice_in_one_process_does_not_crash(tmp_path):
+    """Regression: winrt's bundled old msvcp140.dll used to crash ctranslate2 (segfault) when OCR loaded first.
+    Runs in a subprocess so a crash fails the test instead of killing pytest."""
+    script = f"""
+import asyncio
+from pathlib import Path
+from uni_agent.ocr import get_ocr
+get_ocr()
+from uni_agent.transcribe import make_transcriber
+tr = make_transcriber("base.en", Path(r"{MODEL_DIR}"), "en")
+async def main():
+    return await asyncio.to_thread(tr, Path(r"{tone_wav(tmp_path / 't.wav', seconds=1)}"))
+print("DONE", repr(asyncio.run(main())))
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=300)
+    assert result.returncode == 0, f"crashed with {result.returncode}: {result.stderr[-500:]}"
+    assert "DONE" in result.stdout

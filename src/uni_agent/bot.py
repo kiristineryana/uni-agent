@@ -278,7 +278,8 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
         elif msg.text and msg.text.startswith("/"):
             what = f"command {msg.text.split()[0]}"
         else:
-            what = "photo" if msg.photo else "voice" if msg.voice else "text" if msg.text else "other message"
+            what = ("photo" if msg.photo else "voice" if msg.voice else "video note" if msg.video_note
+                    else "audio" if msg.audio else "text" if msg.text else "other message")
         chat_id = update.effective_chat.id if update.effective_chat else None
         log.info("Incoming %s (allowed chat: %s)", what, is_allowed(chat_id, allowed_chat_id))
 
