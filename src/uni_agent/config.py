@@ -54,6 +54,9 @@ class Settings(BaseModel):
     deadlines_window_days: int = 14
     deadline_ignore: list[str] = Field(default_factory=list)
     ocr_enabled: bool = True
+    moodle_base_url: str | None = None  # default: taken from MOODLE_ICAL_URL
+    moodle_sync_every_minutes: int = 60
+    moodle_max_file_mb: int = 50
     voice_enabled: bool = True
     voice_model: str = "base.en"
     voice_language: str | None = "en"

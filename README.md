@@ -44,6 +44,8 @@ The agent watches the course folders in `config.yaml` (`course_folders`). Drop a
 2. the filename does (`lab`, `tutorial`, `practice`… → lab; `lecture`, `L01`, `slides`… → lecture), otherwise
 3. the bot asks you on Telegram.
 
+**Moodle file sync (optional):** with `MOODLE_TOKEN` in `.env`, lecture/lab files from your Moodle courses are downloaded every hour into `<course folder>\Moodle\` (sorted into `lectures\`/`labs\` when the name makes it clear). Read-only: only three read functions can be called. The first sync only makes local copies (no summaries); later new or updated files are summarised like any new file. Files you already have are not duplicated. Courses without a matching course folder are skipped.
+
 Files matching `ignore_patterns` (e.g. your own submissions with your student ID) are never processed.
 Files that were already in the folders on first run are marked as seen and not summarised; send any of them with `/lecture` or `/lab` to summarise it.
 Identical files are only ever processed once.

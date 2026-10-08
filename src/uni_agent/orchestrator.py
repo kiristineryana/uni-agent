@@ -12,14 +12,14 @@ from pathlib import Path
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from . import db, notify
-from .agents import deadlines, exam, ingest, lab, lecture, weekly
+from .agents import deadlines, exam, ingest, lab, lecture, moodle_sync, weekly
 from .config import Settings
 from .errors import ErrorReporter
 from .extract import OCR_MARK, VOICE_MARK, extract_text, has_real_text, sha256_file
 from .ocr import get_ocr
 from .transcribe import make_transcriber
 from .llm import LLM, LLMError
-from .sources import folder_watch, moodle_ical
+from .sources import folder_watch, moodle_ical, moodle_ws
 
 log = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ HELP_TEXT = """🎓 Uni Agent
 /stop – end a quiz
 /week – weekly review now
 /status – sync time, docs, next alerts, LLM usage
-/sync – pull Moodle deadlines now
+/sync – pull Moodle deadlines (and files, if set up) now
 /fakedeadline <min> – test alert (fake item due in <min> minutes)
 /help – this message
 
@@ -70,6 +70,7 @@ class Orchestrator:
         self.quiz: QuizSession | None = None
         self.errors = ErrorReporter(conn)
         self._ical_failures = 0
+        self._moodle_ws_refused: str | None = None
         self.ocr = get_ocr() if settings.ocr_enabled else None
         self.transcriber = (make_transcriber(settings.voice_model, settings.data_dir / "models",
                                              settings.voice_language) if settings.voice_enabled else None)
@@ -389,6 +390,43 @@ class Orchestrator:
         items = deadlines.upcoming(self.conn, now, timedelta(days=days))
         return deadlines.deadlines_text(items, now, self.settings.tz, days)
 
+    async def run_moodle_file_sync(self) -> str:
+        token = self.settings.secrets.moodle_token
+        if not token:
+            return "Moodle file sync not configured (MOODLE_TOKEN)."
+        if self._moodle_ws_refused:
+            return f"Moodle file sync is off: Moodle refused the token ({self._moodle_ws_refused})."
+        base = self.settings.moodle_base_url or (
+            moodle_ws.base_url_from(self.settings.secrets.moodle_ical_url.get_secret_value())
+            if self.settings.secrets.moodle_ical_url else None)
+        if not base:
+            return "Moodle file sync needs moodle_base_url in config.yaml or MOODLE_ICAL_URL."
+        ws = moodle_ws.MoodleWS(base, token.get_secret_value())
+        try:
+            result = await moodle_sync.sync_files(self.conn, ws, self.settings)
+        except moodle_ws.MoodleWSError as e:
+            if e.permanent:  # the university doesn't allow it, or the token is wrong: stop, don't work around it
+                self._moodle_ws_refused = e.code
+                await self.errors.report("moodle_ws", f"Moodle refused the web-service token ({e.code}). "
+                                                      "File sync is off until the token is fixed; folders still work.")
+            log.warning("Moodle file sync failed: %s", e.code)
+            return f"Moodle file sync failed ({e.code})."
+        finally:
+            await ws.aclose()
+        log.info("Moodle file sync: %d new, %d duplicates, %d errors, first_run=%s",
+                 len(result.new_files), result.duplicates, result.errors, result.first_run)
+        if result.first_run and result.new_files:
+            await notify.send_telegram(
+                f"📥 Moodle file sync connected: saved {len(result.new_files)} existing files into your course "
+                "folders' Moodle\\ subfolders (not summarised, to save your LLM quota). "
+                "New files from now on are summarised automatically. Send any with /lecture or /lab.")
+        msg = f"Moodle files: {len(result.new_files)} new"
+        if result.duplicates:
+            msg += f", {result.duplicates} already in your folders"
+        if result.errors:
+            msg += f", {result.errors} failed (see log)"
+        return msg + "."
+
     async def run_ingest(self) -> None:
         await self.run_ical_sync()
         await self.scan_folders()
@@ -460,6 +498,9 @@ class Orchestrator:
             "📊 Status\n"
             f"Started: {self._fmt_local(db.kv_get(c, 'started_at'))}\n"
             f"Last Moodle sync: {self._fmt_local(db.kv_get(c, 'last_ical_sync'))}\n"
+            + (f"Last Moodle file sync: {self._fmt_local(db.kv_get(c, 'last_moodle_file_sync'))}"
+               f"{' (off: ' + self._moodle_ws_refused + ')' if self._moodle_ws_refused else ''}\n"
+               if self.settings.secrets.moodle_token else "") +
             f"Docs summarised: {doc_counts.get('lecture', 0)} lectures, {doc_counts.get('lab', 0)} labs\n"
             f"Next deadline: {next_item}\n"
             f"LLM today: {used:,} / {self.settings.llm.daily_token_cap:,} tokens "

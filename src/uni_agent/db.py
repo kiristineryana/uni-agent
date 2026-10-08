@@ -59,6 +59,16 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     tokens_out INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS moodle_files (
+    course_id    INTEGER NOT NULL,
+    fileurl      TEXT NOT NULL,
+    timemodified INTEGER NOT NULL,
+    sha256       TEXT,
+    local_path   TEXT,
+    synced_at    TEXT NOT NULL,
+    PRIMARY KEY (course_id, fileurl)
+);
+
 CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT

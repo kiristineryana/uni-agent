@@ -19,6 +19,11 @@ ignore_patterns:
   - "*1234567*"
   - "~$*"
 
+# Moodle file sync (only if MOODLE_TOKEN is set in .env). Read-only: lecture/lab files from your courses are
+# downloaded into <course folder>\Moodle\. The first sync just makes local copies; later new files get summarised.
+moodle_sync_every_minutes: 60
+moodle_max_file_mb: 50
+
 # Read text from image-only slides / scanned pages with the OCR built into Windows (runs locally).
 ocr_enabled: true
 

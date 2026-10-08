@@ -105,6 +105,9 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
     async def sync_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await guard(update):
             await update.message.reply_text(await orch.run_ical_sync())
+            if orch.settings.secrets.moodle_token:
+                await update.message.chat.send_action(ChatAction.TYPING)
+                await update.message.reply_text(await orch.run_moodle_file_sync())
 
     async def fake_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await guard(update):

@@ -177,6 +177,10 @@ def run_bot(settings: Settings, conn) -> None:
         wr = sch.weekly_review
         scheduler.add_job(orch.run_weekly_review, "cron", day_of_week=wr.day_of_week, hour=wr.hour,
                           minute=wr.minute, id="weekly_review", misfire_grace_time=6 * 3600, coalesce=True)
+        if settings.secrets.moodle_token:
+            scheduler.add_job(orch.run_moodle_file_sync, "interval", minutes=settings.moodle_sync_every_minutes,
+                              next_run_time=now + timedelta(minutes=2), id="moodle_files",
+                              max_instances=1, coalesce=True)
         scheduler.start()
         log.info("Bot started; long polling.")
         await notify.send_telegram("🟢 Uni Agent is online. /help for commands.")
