@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 import time
 from datetime import datetime, timedelta
@@ -73,6 +74,10 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = load_settings()
     setup_logging(settings)
+    # Under pythonw.exe there is no console: libraries that print (e.g. download progress bars) would crash.
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name) is None:
+            setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
     conn = db.connect(settings.db_path)
 
     problems = check(settings)

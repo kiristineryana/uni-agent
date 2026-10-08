@@ -12,7 +12,8 @@ Plain text, bullets with "•".
 
 OCR_NOTE = """
 Text after "[OCR from image]" was read from slide images by OCR: expect small recognition errors
-(l/I/1, O/0, broken table rows). Interpret it sensibly and never quote obvious OCR garbage."""
+(l/I/1, O/0, broken table rows). Text after "[Voice transcript]" is speech-to-text of a recording: expect
+misheard technical terms and no punctuation structure. Interpret both sensibly and never quote obvious errors."""
 
 OUTPUT_RULE = ("Output ONLY the structure below, starting with its first line. "
                "Do not repeat these instructions or the context section.")

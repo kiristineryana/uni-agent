@@ -21,6 +21,7 @@ Read-only toward Moodle. No Moodle password is stored. Only your Telegram accoun
 | `/lab [course]` then a file | Lab briefing (e.g. `/lab 235`) |
 | *a file with no command* | Bot asks **Lecture or Lab?** with buttons |
 | 📷 *a photo or album* | Text is read with OCR, then summarised like a file. Caption e.g. `/lecture 235 Week 3 board` (type, course, title). An album = one document |
+| 🎙️ *a voice note or audio file* | Transcribed locally. **During a quiz it's your answer**; otherwise summarised like a file (caption/buttons). Short memos just get the transcript back |
 | `/quiz lectures <topic or week>` | Theory quiz, e.g. `/quiz lectures normalization`, `/quiz lectures week 3` |
 | `/quiz labs <topic or week>` | Practical / viva quiz |
 | `/skip`, `/stop` | Skip a question (counts as wrong) / end the quiz |
@@ -32,6 +33,8 @@ Read-only toward Moodle. No Moodle password is stored. Only your Telegram accoun
 You can also put the command in a file's caption, e.g. send a PDF captioned `/lab 235`.
 
 **Photos:** for best OCR, send the photo as a *File* (📎 → File) so Telegram doesn't compress it; keep the page flat, well lit and filling the frame. Printed text and slides work well; handwriting doesn't.
+
+**Voice:** speech-to-text runs on your PC with faster-whisper (`voice_model` in `config.yaml`, default `base.en`; the ~150 MB model is downloaded once into `data\models`). Audio never leaves the computer; only the transcript is summarised.
 
 ## How files get in
 

@@ -15,8 +15,9 @@ from . import db, notify
 from .agents import deadlines, exam, ingest, lab, lecture, weekly
 from .config import Settings
 from .errors import ErrorReporter
-from .extract import OCR_MARK, extract_text, has_real_text, sha256_file
+from .extract import OCR_MARK, VOICE_MARK, extract_text, has_real_text, sha256_file
 from .ocr import get_ocr
+from .transcribe import make_transcriber
 from .llm import LLM, LLMError
 from .sources import folder_watch, moodle_ical
 
@@ -51,7 +52,8 @@ HELP_TEXT = """🎓 Uni Agent
 /help – this message
 
 Send a file with no command and I'll ask whether it's a lecture or a lab.
-📷 Photos work too (read with OCR); send several as an album for one summary."""
+📷 Photos work too (read with OCR); send several as an album for one summary.
+🎙️ Voice notes: during a quiz they're your answer; otherwise transcribed and summarised."""
 
 
 def is_allowed(chat_id: int | None, allowed_chat_id: int | None) -> bool:
@@ -69,6 +71,8 @@ class Orchestrator:
         self.errors = ErrorReporter(conn)
         self._ical_failures = 0
         self.ocr = get_ocr() if settings.ocr_enabled else None
+        self.transcriber = (make_transcriber(settings.voice_model, settings.data_dir / "models",
+                                             settings.voice_language) if settings.voice_enabled else None)
 
     # --- documents -------------------------------------------------------
 
@@ -175,6 +179,51 @@ class Orchestrator:
         txt = images[0].parent / f"{name}.txt"
         txt.write_text(body + "\n", encoding="utf-8")
         log.info("OCR'd %d photo(s) into %s (%d chars)", len(images), txt.name, len(body))
+        await self.process_upload(txt, kind, course)
+
+    async def transcribe(self, path: Path) -> str | None:
+        """None when voice support is off/unavailable; '' when no speech was heard."""
+        if self.transcriber is None:
+            return None
+        return await asyncio.to_thread(self.transcriber, path)
+
+    def awaiting_quiz_answer(self) -> bool:
+        return self.quiz is not None and self.quiz.current is not None
+
+    async def quiz_voice_answer(self, path: Path) -> str:
+        text = await self.transcribe(path)
+        if text is None:
+            return "Voice answers need speech recognition, which is off or unavailable on this computer."
+        if not text:
+            return "🎙️ I couldn't hear any speech. Try again, type your answer, or /skip."
+        return f"🎙️ I heard: “{text}”\n\n" + (await self.quiz_answer(text) or "")
+
+    async def process_voice(self, path: Path, kind: str | None, course: str | None,
+                            title: str | None = None) -> None:
+        """A voice note / recording -> transcript -> one text document -> the normal upload flow.
+        Too short to summarise -> just send the transcript back."""
+        if self.transcriber is None:
+            await notify.send_telegram("Voice support needs speech recognition, which is off or unavailable.")
+            return
+        await notify.send_telegram("🎙️ Transcribing…")
+        try:
+            text = await self.transcribe(path)
+        except Exception as e:  # corrupt/unsupported audio
+            log.exception("Transcription failed for %s", path.name)
+            await notify.send_telegram(f"⚠️ Couldn't read that audio ({type(e).__name__}).")
+            return
+        if not text:
+            await notify.send_telegram("🎙️ I couldn't hear any speech in that recording.")
+            return
+        body = f"## Voice note\n{VOICE_MARK}\n{text}"
+        if not has_real_text(body):
+            await notify.send_telegram(f"🎙️ Transcript:\n{text}\n\n(Too short to summarise; "
+                                       "record a longer explanation or send the slides instead.)")
+            return
+        stamp = datetime.now(self.settings.tz).strftime("%Y-%m-%d %H%M")
+        name = re.sub(r'[<>:"/\\|?*]+', "", title or "").strip()[:80] or f"Voice note {stamp}"
+        txt = path.parent / f"{name}.txt"
+        txt.write_text(body + "\n", encoding="utf-8")
         await self.process_upload(txt, kind, course)
 
     def _lab_deadlines(self, course: str) -> list[str]:

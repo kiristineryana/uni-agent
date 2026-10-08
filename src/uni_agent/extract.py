@@ -9,6 +9,7 @@ SUPPORTED = {".pdf", ".pptx", ".docx", ".txt", ".md"}
 
 OcrFunc = Callable[[bytes], str]
 OCR_MARK = "[OCR from image]"
+VOICE_MARK = "[Voice transcript]"
 OCR_BELOW_CHARS = 40  # a slide/page with less real text than this is treated as an image
 
 

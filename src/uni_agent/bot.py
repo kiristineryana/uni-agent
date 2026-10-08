@@ -17,6 +17,7 @@ from .orchestrator import Orchestrator, is_allowed
 log = logging.getLogger(__name__)
 
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".heic", ".webp"}
+AUDIO_EXT = {".ogg", ".oga", ".opus", ".mp3", ".m4a", ".wav", ".aac", ".flac", ".webm", ".amr"}
 ALBUM_WAIT_SECONDS = 3.0  # Telegram delivers an album as separate messages a moment apart
 
 
@@ -149,6 +150,9 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
         if suffix in IMAGE_EXT:  # a photo sent as a File (full resolution: best for OCR)
             await image(update, context, doc, suffix)
             return
+        if suffix in AUDIO_EXT:  # a recording sent as a File
+            await audio_message(update, context, doc, suffix)
+            return
         kind, course, _ = kind_course_title(update, context)
         if suffix not in SUPPORTED:
             await update.message.reply_text("I can read PDF, PPTX, DOCX, TXT and MD files, and photos.")
@@ -163,6 +167,33 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
             await update.message.reply_text("Got it, working on it… (this can take a minute)")
         # Run in the background so the bot stays responsive while the LLM works.
         context.application.create_task(orch.process_upload(dest, kind, course))
+
+    async def voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await guard(update):
+            return
+        msg = update.message
+        if msg.voice:
+            await audio_message(update, context, msg.voice, ".ogg")
+        elif msg.video_note:  # round video message: only its audio is used
+            await audio_message(update, context, msg.video_note, ".mp4")
+        else:
+            await audio_message(update, context, msg.audio, Path(msg.audio.file_name or "a.mp3").suffix.lower())
+
+    async def audio_message(update: Update, context: ContextTypes.DEFAULT_TYPE, media, suffix: str) -> None:
+        """During a quiz a voice note is the answer; otherwise it's transcribed and summarised like a file."""
+        msg = update.message
+        if media.file_size and media.file_size > 20 * 1024 * 1024:
+            await msg.reply_text("Telegram only lets bots download files up to 20 MB; send a shorter recording.")
+            return
+        dest = upload_dir() / f"voice_{msg.message_id}{suffix}"
+        await (await media.get_file()).download_to_drive(dest)
+        explicit = parse_caption(msg.caption, orch.course_from_arg)[0] or context.user_data.get("next_kind")
+        if orch.awaiting_quiz_answer() and not explicit:
+            await msg.chat.send_action(ChatAction.TYPING)
+            await msg.reply_text(await orch.quiz_voice_answer(dest))
+            return
+        kind, course, title = kind_course_title(update, context)
+        context.application.create_task(orch.process_voice(dest, kind, course, title))
 
     async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await guard(update):
@@ -266,5 +297,6 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
     app.add_handler(CommandHandler("stop", stop_cmd))
     app.add_handler(MessageHandler(filters.Document.ALL, document))
     app.add_handler(MessageHandler(filters.PHOTO, photo))
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO | filters.VIDEO_NOTE, voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_msg))
     app.add_handler(MessageHandler(filters.ALL, fallback))

@@ -18,6 +18,9 @@ dependencies = [
     "anthropic>=0.69",
     "google-genai>=1.0",
     "tzdata>=2024.1",
+    # Local speech-to-text for voice notes (audio decoded with PyAV ourselves; see transcribe.py)
+    "faster-whisper>=1.1",
+    "av>=14",
     # Windows built-in OCR for image-only slides / scanned pages
     "winrt-runtime>=3.0; sys_platform == 'win32'",
     "winrt-Windows.Media.Ocr>=3.0; sys_platform == 'win32'",

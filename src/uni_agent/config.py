@@ -54,6 +54,9 @@ class Settings(BaseModel):
     deadlines_window_days: int = 14
     deadline_ignore: list[str] = Field(default_factory=list)
     ocr_enabled: bool = True
+    voice_enabled: bool = True
+    voice_model: str = "base.en"
+    voice_language: str | None = "en"
     data_dir: Path = PROJECT_ROOT / "data"
     log_dir: Path = PROJECT_ROOT / "logs"
     secrets: Secrets = Secrets()
