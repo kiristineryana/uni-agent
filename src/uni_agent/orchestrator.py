@@ -12,7 +12,7 @@ from pathlib import Path
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from . import db, notify
-from .agents import deadlines, exam, files_index, ingest, lab, lecture, moodle_sync, weekly
+from .agents import deadlines, enrolment, exam, files_index, ingest, lab, lecture, moodle_sync, weekly
 from .config import Settings
 from .errors import ErrorReporter
 from .extract import OCR_MARK, VOICE_MARK, extract_text, has_real_text, sha256_file
@@ -38,7 +38,8 @@ class QuizSession:
 
 HELP_TEXT = """🎓 Uni Agent
 
-/deadlines – what's due in the next 14 days
+/deadlines – what's due in the next 14 days (your courses & sections)
+/hidden – Moodle items filtered out as not yours
 /lecture [course] – then send a file: lecture summary
 /lab [course] – then send a file: lab briefing
   (e.g. /lab 235, or put "/lab 235" in the file's caption)
@@ -444,8 +445,33 @@ class Orchestrator:
     def deadlines(self) -> str:
         now = db.utcnow()
         days = self.settings.deadlines_window_days
-        items = deadlines.upcoming(self.conn, now, timedelta(days=days))
-        return deadlines.deadlines_text(items, now, self.settings.tz, days)
+        window = timedelta(days=days)
+        text = deadlines.deadlines_text(deadlines.upcoming(self.conn, now, window), now, self.settings.tz, days)
+        unclear = deadlines.filtered(self.conn, now, window, "unclear")
+        if unclear:
+            text += "\n\n" + deadlines.unclear_text(unclear, now, self.settings.tz)
+        hidden = deadlines.filtered(self.conn, now, window, "ignored")
+        if hidden:
+            text += f"\n\n🙈 {len(hidden)} item(s) for other courses/sections hidden: /hidden"
+        return text
+
+    def hidden(self) -> str:
+        days = self.settings.deadlines_window_days
+        pairs = deadlines.filtered(self.conn, db.utcnow(), timedelta(days=days), "ignored")
+        return deadlines.hidden_text(pairs, self.settings.tz, days)
+
+    def _enrolment_classifier(self):
+        """FeedItem -> (status, note) from the enrolment in config (local)."""
+        e = self.settings.enrolment
+        courses = {c.upper() for c in e.courses}
+        sessions = [enrolment.Session(s.course.upper(), s.type, s.staff,
+                                      enrolment.DAYS.get(s.day.lower(), s.day.lower()), s.time) for s in e.sessions]
+        others = set(e.other_staff)
+
+        def classify(item):
+            d = enrolment.classify(item.title, item.course, courses, sessions, others)
+            return d.status, d.reason
+        return classify
 
     async def run_moodle_file_sync(self) -> str:
         token = self.settings.secrets.moodle_token
@@ -509,7 +535,8 @@ class Orchestrator:
             except Exception:
                 pass
         self._ical_failures = 0
-        added, updated = ingest.upsert_items(self.conn, items)
+        added, updated = ingest.upsert_items(self.conn, items, classify=self._enrolment_classifier())
+        ingest.reclassify_upcoming(self.conn, self._enrolment_classifier(), db.utcnow())
         db.kv_set(self.conn, "last_ical_sync", db.iso(db.utcnow()))
         log.info("iCal sync: %d events, %d new, %d updated", len(items), added, updated)
         return f"Moodle sync OK: {len(items)} events ({added} new, {updated} updated)."

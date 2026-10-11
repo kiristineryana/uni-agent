@@ -32,6 +32,21 @@ class Schedules(BaseModel):
     weekly_review: WeeklySchedule = WeeklySchedule()
 
 
+class SessionConfig(BaseModel):
+    course: str
+    type: str = "lecture"  # lecture | lab
+    staff: str = ""
+    day: str  # mon..sun (or full name)
+    time: str  # "HH:MM", 24h
+
+
+class Enrolment(BaseModel):
+    """Which Moodle items are yours. Empty = alert on everything in the feed (old behaviour)."""
+    courses: list[str] = Field(default_factory=list)
+    sessions: list[SessionConfig] = Field(default_factory=list)
+    other_staff: list[str] = Field(default_factory=list)  # tutors of groups you're NOT in
+
+
 class Secrets(BaseModel):
     telegram_bot_token: SecretStr | None = None
     telegram_chat_id: int | None = None
@@ -53,6 +68,7 @@ class Settings(BaseModel):
     )
     deadlines_window_days: int = 14
     deadline_ignore: list[str] = Field(default_factory=list)
+    enrolment: Enrolment = Enrolment()
     ocr_enabled: bool = True
     moodle_base_url: str | None = None  # default: taken from MOODLE_ICAL_URL
     moodle_sync_every_minutes: int = 60

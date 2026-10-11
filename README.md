@@ -16,7 +16,8 @@ Read-only toward Moodle. No Moodle password is stored. Only your Telegram accoun
 | Command | What it does |
 |---|---|
 | `/help` | List commands |
-| `/deadlines` | Everything due in the next 14 days, with countdowns |
+| `/deadlines` | What's due in the next 14 days for **your** courses and sections, with countdowns; unclear Moodle items are listed separately (never alerted) |
+| `/hidden` | Moodle items filtered out as not yours (other courses, other lab/lecture groups), with the reason |
 | `/lecture [course]` then a file | Lecture summary (e.g. `/lecture 205`) |
 | `/lab [course]` then a file | Lab briefing (e.g. `/lab 235`) |
 | *a file with no command* | Bot asks **Lecture or Lab?** with buttons |
@@ -36,6 +37,19 @@ You can also put the command in a file's caption, e.g. send a PDF captioned `/la
 **Photos:** for best OCR, send the photo as a *File* (📎 → File) so Telegram doesn't compress it; keep the page flat, well lit and filling the frame. Printed text and slides work well; handwriting doesn't.
 
 **Voice:** speech-to-text runs on your PC with faster-whisper (`voice_model` in `config.yaml`, default `base.en`; the ~150 MB model is downloaded once into `data\models`). Audio never leaves the computer; only the transcript is summarised.
+
+## Only your courses and sections
+
+Moodle's calendar often includes events for lab and lecture groups you're not in. Add your timetable as `enrolment` in
+`config.local.yaml` (see the example in `config.yaml`) and the agent will:
+
+1. alert only for your enrolled courses (never any other course code);
+2. for items that name a tutor or a day/time group, alert only when it's one of **your** sessions;
+3. alert on course-wide items (assignments, quizzes) for your courses;
+4. never alert on items that don't clearly say their course or section: they're listed under "⚠️ Not alerted" in
+   `/deadlines` and the weekly review instead.
+
+Add tutors of other groups to `enrolment.other_staff` to hide their items too. Changes apply on the next sync (`/sync`).
 
 ## How files get in
 

@@ -91,3 +91,30 @@ def deadlines_text(items: list[Item], now: datetime, tz: ZoneInfo, days: int) ->
         course = f"[{it.course}] " if it.course else ""
         lines.append(f"• {kind_tag(it)}{course}{it.title}\n   {fmt_due(it.due_at, tz)} · in {countdown(it.due_at - now)}")
     return "\n".join(lines)
+
+
+def filtered(conn: sqlite3.Connection, now: datetime, within: timedelta, status: str) -> list[tuple[Item, str]]:
+    """Upcoming items the enrolment filter marked `status` ('unclear' or 'ignored'), with the reason."""
+    rows = conn.execute(
+        "SELECT * FROM items WHERE status = ? AND due_at > ? AND due_at <= ? ORDER BY due_at",
+        (status, db.iso(now), db.iso(now + within)),
+    ).fetchall()
+    return [(_row_to_item(r), r["note"] or "") for r in rows]
+
+
+def unclear_text(pairs: list[tuple[Item, str]], now: datetime, tz: ZoneInfo) -> str:
+    lines = ["⚠️ Not alerted: unclear which course or section these are (check them on Moodle)"]
+    for it, why in pairs:
+        course = f"[{it.course}] " if it.course else ""
+        lines.append(f"• {course}{it.title}\n   {fmt_due(it.due_at, tz)} · {why}")
+    return "\n".join(lines)
+
+
+def hidden_text(pairs: list[tuple[Item, str]], tz: ZoneInfo, days: int) -> str:
+    if not pairs:
+        return f"Nothing hidden in the next {days} days."
+    lines = [f"🙈 Hidden (not yours) in the next {days} days"]
+    for it, why in pairs:
+        course = f"[{it.course}] " if it.course else ""
+        lines.append(f"• {course}{it.title}\n   {fmt_due(it.due_at, tz)} · {why}")
+    return "\n".join(lines)

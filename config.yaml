@@ -64,3 +64,11 @@ deadlines_window_days: 14
 # Moodle events whose title contains any of these (case-insensitive) are ignored,
 # e.g. lab sections you're not in: ["TutorName_Monday"]
 deadline_ignore: []
+
+# Your enrolment (put the real one in config.local.yaml). With it, Moodle items are alerted only for your courses,
+# and section-specific items only when they match your tutor or day+time; unclear items are listed, never alerted.
+# enrolment:
+#   courses: [CSIT205, CSIT214, CSCI235]
+#   sessions:
+#     - {course: CSIT205, type: lab, staff: "Tutor Name", day: wed, time: "08:30"}
+#   other_staff: []        # tutors of other groups; items naming them are hidden

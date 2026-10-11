@@ -103,6 +103,11 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
         if await guard(update):
             await update.message.reply_text(orch.deadlines())
 
+    async def hidden_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if await guard(update):
+            for part in split_message(orch.hidden()):
+                await update.message.reply_text(part)
+
     async def sync_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await guard(update):
             await update.message.reply_text(await orch.run_ical_sync())
@@ -314,6 +319,7 @@ def register(app: Application, orch: Orchestrator, allowed_chat_id: int) -> None
     app.add_handler(CommandHandler(["start", "help"], start))
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("deadlines", deadlines_cmd))
+    app.add_handler(CommandHandler("hidden", hidden_cmd))
     app.add_handler(CommandHandler("sync", sync_cmd))
     app.add_handler(CommandHandler("fakedeadline", fake_deadline))
     app.add_handler(CommandHandler("lecture", lecture_cmd))

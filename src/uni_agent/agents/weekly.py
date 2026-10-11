@@ -94,6 +94,9 @@ def build_review(conn: sqlite3.Connection, now: datetime, tz: ZoneInfo) -> str:
             f"(in {deadlines.countdown(i.due_at - now)})" for i in due))
     else:
         parts.append("⏰ Due in the next 7 days\nNothing on Moodle. 🎉")
+    unclear = deadlines.filtered(conn, now, timedelta(days=7), "unclear")
+    if unclear:
+        parts.append(deadlines.unclear_text(unclear, now, tz))
     lab_courses = {r["course"] for r in conn.execute(
         "SELECT DISTINCT course FROM documents WHERE kind = 'lab' AND status = 'done'")}
     tasks = suggestions(lec, lab, due, now, tz, lab_courses=lab_courses)

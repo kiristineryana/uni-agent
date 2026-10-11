@@ -94,7 +94,16 @@ def connect(path: Path | str) -> sqlite3.Connection:
     if on_disk:
         conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add columns introduced after the first release to existing databases."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(items)")}
+    if "note" not in cols:  # why an item is alerted / ignored / unclear (enrolment filter)
+        with conn:
+            conn.execute("ALTER TABLE items ADD COLUMN note TEXT")
 
 
 def kv_get(conn: sqlite3.Connection, key: str) -> str | None:

@@ -21,6 +21,7 @@ Full spec: `UNI_AGENT_BUILD_SPEC.md`. Build proceeds phase by phase (section 7);
   Kind = `lectures/`/`labs/` subfolder if present, else filename heuristic, else ask via Telegram buttons.
 - OCR: Windows built-in engine via `winrt` (`ocr.py`), only for slides/pages with <40 chars of real text; output marked `[OCR from image]`.
 - Voice: faster-whisper `base.en` (`transcribe.py`); audio decoded with PyAV 19 ourselves because faster-whisper's decoder passes a removed PyAV option. During a quiz a voice note = answer.
+- Enrolment filter (`agents/enrolment.py`, config `enrolment` in config.local.yaml): Moodle items get status open (alert) / ignored / unclear (listed, never alerted) with a `note`; re-applied every sync. Never commit real tutor names or the timetable.
 - Files matching `ignore_patterns` (student ID = own submissions) are skipped.
 - First run marks existing files as seen (no backfill summaries).
 - LLM default: Gemini free tier, Flash-Lite first then 3.8 Flash (Flash is usually 503-overloaded), so send each document in ONE request where possible; Anthropic is switchable. Timezone Asia/Dubai.
